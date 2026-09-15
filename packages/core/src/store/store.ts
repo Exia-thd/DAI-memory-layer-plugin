@@ -62,6 +62,50 @@ export class StoreLockedError extends Error {
   }
 }
 
+/**
+ * A write-ahead log LadybugDB wrote and cannot read back.
+ *
+ * LadybugDB 0.20.3 and 0.20.4 write a WAL record they cannot replay for a
+ * committed list or array value past about 1.3 KB -- measured, 320 floats
+ * replay and 336 do not -- and every embedding here is 384, whether written by
+ * SET or in a CREATE. CREATE and SET on strings and integers, prepared
+ * statements, SIGKILL mid-transaction and an exit with queries in flight all
+ * replay; a vector write does not, failing with one of these two messages. A clean close checkpoints first, so the log is never
+ * replayed and nothing shows. Any exit before that -- Ctrl+C, the hook's time
+ * limit, a crash -- and every later open failed, until somebody deleted files by
+ * hand. Fixed upstream in the 0.21 development builds; `transact` checkpoints
+ * after every commit until a release carries it.
+ */
+export class UnreplayableWalError extends Error {
+  constructor(dir: string, cause: unknown) {
+    super(
+      `The memory store at ${dir} has a write-ahead log that cannot be replayed: a write was ` +
+        'interrupted before it reached the database file. ' +
+        `(${cause instanceof Error ? cause.message : String(cause)}) ` +
+        'Run a command that opens the store for writing -- `dai-memory init --no-scan` -- to ' +
+        'recover it. The interrupted write is lost; the log is kept beside the store for inspection.',
+    );
+    this.name = 'UnreplayableWalError';
+    this.cause = cause;
+  }
+}
+
+function isUnreplayableWal(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /corrupted wal file|wal file is corrupted/i.test(message);
+}
+
+/** Copies of logs set aside by a recovery, oldest first. Read by `doctor`. */
+export function unreplayableWalCopies(dir: string): string[] {
+  try {
+    return fs.readdirSync(dir)
+      .filter((name) => name.startsWith('store.lbug.wal.unreplayable-'))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
 function isLockError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return /could not set lock|resource temporarily unavailable/i.test(message);
@@ -135,16 +179,74 @@ export class MemoryStore {
       this.conn = new (nativeLbug().Connection)(this.db);
       await this.conn.query('RETURN 1');
     } catch (err) {
-      this.db = null;
-      this.conn = null;
+      await this.discardHandles();
       if (!this.readOnly && isLockError(err)) throw new StoreLockedError(this.dir, err);
-      throw err;
+      if (!isUnreplayableWal(err)) throw err;
+      // A reader cannot recover: it takes no lock, so it cannot know whether the
+      // log belongs to a writer that is still running, and a live writer's log
+      // is not garbage. It says what to run instead.
+      if (this.readOnly) throw new UnreplayableWalError(this.dir, err);
+      await this.recoverWal(err);
     }
 
     this.openedAtSeq = seq;
     this.meta = readMeta(this.dir);
     if (!this.readOnly) await this.migrate();
-    return this.conn;
+    // Set by the open above or by recoverWal, which throws rather than return without one.
+    return this.conn!;
+  }
+
+  private async discardHandles(): Promise<void> {
+    try { await this.conn?.close(); } catch { /* the handle never opened */ }
+    try { await this.db?.close(); } catch { /* the handle never opened */ }
+    this.conn = null;
+    this.db = null;
+  }
+
+  /**
+   * Opens past a log that cannot be replayed, and keeps the log.
+   *
+   * Only from a writable open, which takes the store's lock: a second writer
+   * still running makes the reopen fail with a lock error and nothing is
+   * touched. The log is copied aside before the reopen, because a tolerant
+   * replay consumes it -- what was lost stays on disk to be looked at, and
+   * `doctor` reports it until somebody removes the copy.
+   *
+   * What is lost is what the log held after the last checkpoint. With a
+   * checkpoint after every commit, that is the one write that was interrupted.
+   */
+  private async recoverWal(cause: unknown): Promise<void> {
+    const wal = `${this.dbPath}.wal`;
+    const aside = `${wal}.unreplayable-${Date.now()}`;
+    if (fs.existsSync(wal)) fs.copyFileSync(wal, aside);
+
+    try {
+      this.db = new (nativeLbug().Database)(
+        this.dbPath,
+        this.options.bufferPoolBytes ?? 0,
+        true,
+        false,
+        0,
+        true,
+        -1,
+        // throwOnWalReplayFailure: replay up to the record that fails, then open.
+        false,
+      );
+      this.conn = new (nativeLbug().Connection)(this.db);
+      await this.conn.query('RETURN 1');
+    } catch (err) {
+      await this.discardHandles();
+      if (isLockError(err)) throw new StoreLockedError(this.dir, err);
+      throw new UnreplayableWalError(this.dir, err);
+    }
+
+    const message =
+      `Recovered the memory store at ${this.dir} from an interrupted write. The write-ahead log ` +
+      `could not be replayed (${cause instanceof Error ? cause.message : String(cause)}); the store ` +
+      `is open at its last checkpoint, and the log is kept at ${aside}. Anything written after ` +
+      'that checkpoint -- the interrupted command -- needs to be done again.';
+    log('error', message);
+    process.stderr.write(`dai-memory: ${message}\n`);
   }
 
   async close(): Promise<void> {
@@ -1670,6 +1772,24 @@ export class MemoryStore {
       throw err;
     }
     this.transactionDepth = 0;
+
+    // Into the database file before anyone is told the write happened.
+    //
+    // On the LadybugDB releases this runs on, a committed vector write sits in a
+    // log that cannot be replayed (see UnreplayableWalError), so a commit alone
+    // is durable only until the process exits some way other than closing. The
+    // checkpoint is what makes it survive that, and it comes before the counter
+    // moves because the counter is the promise to readers that the write is
+    // there. Measured at 24-45 ms per ingest-file transaction.
+    //
+    // A failed checkpoint does not undo the commit: the write is there, and a
+    // clean close checkpoints it. It is logged, not thrown, because throwing
+    // would tell the caller a write failed that did not.
+    try {
+      await conn.query('CHECKPOINT');
+    } catch (err) {
+      log('error', `committed to ${this.dir} but could not checkpoint; the write is durable once the store closes`, err);
+    }
 
     try {
       this.meta = bumpWriteSeq(this.dir, metaPatch);

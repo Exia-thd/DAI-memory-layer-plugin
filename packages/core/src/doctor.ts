@@ -6,6 +6,7 @@ import { pendingCount } from './store/journal.js';
 import { summarizeCapability } from './store/capabilities.js';
 import { identityLabel, type EmbeddingIdentity } from './embed/types.js';
 import { embeddingReadiness } from './embed/model-cache.js';
+import { unreplayableWalCopies } from './store/store.js';
 import { probeAstChunking, relationLanguages } from './ingest/languages.js';
 import { CHUNKER_VERSION } from './ingest/chunker.js';
 
@@ -80,6 +81,20 @@ export async function doctor(
       (recorded && recorded.status !== ast.status
         ? ` (recorded as ${recorded.status} at init; it has changed since)`
         : ''),
+  });
+
+  // A log set aside by a recovery is a write somebody made and did not keep.
+  // Reported until the copy is removed, because the recovery itself printed
+  // once, to whatever terminal happened to be running the command.
+  const walCopies = unreplayableWalCopies(store.dir);
+  checks.push({
+    name: 'interrupted writes',
+    status: walCopies.length === 0 ? 'ok' : 'warn',
+    detail: walCopies.length === 0
+      ? 'none'
+      : `${walCopies.length} write-ahead log(s) could not be replayed and were set aside after an ` +
+        `interrupted write: ${walCopies.join(', ')}. What they held was lost; redo the interrupted ` +
+        'command, then delete the copies.',
   });
 
   // Whether this machine can embed at all, checked on disk rather than by

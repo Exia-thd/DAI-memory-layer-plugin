@@ -459,6 +459,7 @@ Cái gì đang thực sự chạy. Chạy khi kết quả có vẻ sai, và ch�
 | Dòng | Nghĩa là gì khi nó kêu |
 |---|---|
 | `embedding model FAIL` | Model chưa có trên đĩa — `node bin/setup.mjs`. Mọi thứ cần embed đều không chạy cho tới khi có |
+| `interrupted writes WARN` | Một lệnh bị ngắt giữa lúc ghi và write-ahead log của nó không phát lại được. Kho đã được phục hồi về lần checkpoint gần nhất, log được giữ bên cạnh; chạy lại lệnh đó rồi xoá bản `store.lbug.wal.unreplayable-*` |
 | `tokenizer version FAIL` | Postings cũ hơn bản build này — `dai-memory ingest --force` |
 | `model drift WARN` | Vector đã lưu thuộc model khác — `dai-memory embed --force` |
 | `keyword index WARN` | Một số node vô hình với tìm kiếm từ khoá |

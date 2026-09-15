@@ -1,5 +1,7 @@
 export * from './types.js';
-export { MemoryStore, StoreLockedError, WriteSeqError } from './store/store.js';
+export {
+  MemoryStore, StoreLockedError, WriteSeqError, UnreplayableWalError, unreplayableWalCopies,
+} from './store/store.js';
 export { SCHEMA_VERSION, DEFAULT_DIMENSIONS, parseDimensions, ddl } from './store/schema.js';
 export { readMeta, writeMeta, updateMeta, bumpWriteSeq, type StoreMeta } from './store/meta.js';
 export { awaitHandleRelease, HandleStillLockedError, DEFAULT_RELEASE_BUDGET_MS } from './store/reopen.js';

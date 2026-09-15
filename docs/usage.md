@@ -452,6 +452,7 @@ What is actually working. Run it when results feel wrong, and in CI:
 | Line | Meaning when it complains |
 |---|---|
 | `embedding model FAIL` | The model is not on disk — `node bin/setup.mjs`. Nothing that embeds will run until it is |
+| `interrupted writes WARN` | A command was cut off mid-write and its write-ahead log could not be replayed. The store was recovered to its last checkpoint and the log kept beside it; redo that command, then delete the `store.lbug.wal.unreplayable-*` copy |
 | `tokenizer version FAIL` | Postings predate this build — `dai-memory ingest --force` |
 | `model drift WARN` | Stored vectors are from another model — `dai-memory embed --force` |
 | `keyword index WARN` | Some nodes are invisible to keyword search |
