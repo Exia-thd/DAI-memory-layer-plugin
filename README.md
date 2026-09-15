@@ -118,7 +118,7 @@ A task-by-task guide is in [docs/usage.md](docs/usage.md).
 
 | Command | Purpose |
 |---|---|
-| `dai-memory init [paths...]` | Create the store, scan the project, build the code graph and the viewer |
+| `dai-memory init [paths...] [--fresh]` | Create the store, scan the project, build the code graph and the viewer. Run again to rebuild what a scan produces and keep what was recorded; `--fresh` removes recorded memory too |
 | `dai-memory index <query>` | Titles only, ~15 tokens each — pick before you read |
 | `dai-memory ingest [paths]` | Load files — no paths scans the project. Replaces what they produced before, reclaims what is gone, refreshes the viewer |
 | `dai-memory search <query>` | Three-branch retrieval with a fusion report |

@@ -67,6 +67,19 @@ function isLockError(err: unknown): boolean {
   return /could not set lock|resource temporarily unavailable/i.test(message);
 }
 
+/** Recorded links that hang off reproducible data, held across a rebuild. */
+export interface RecordedLinks {
+  edges: MemoryEdge[];
+  anchors: Array<{ memoryId: string; symbolId: string; weight: number; createdAt: number }>;
+}
+
+export interface RestoreReport {
+  edges: number;
+  anchors: number;
+  droppedEdges: MemoryEdge[];
+  droppedAnchors: RecordedLinks['anchors'];
+}
+
 export class MemoryStore {
   readonly dir: string;
   readonly dbPath: string;
@@ -212,7 +225,24 @@ export class MemoryStore {
    * hand back a store that nothing in this process could reopen, which is what
    * made `init` fail on its own doctor run.
    */
+  /**
+   * A new store, and only a new one.
+   *
+   * It used to run over an existing store too, because `init` called it every
+   * time. That wrote a fresh meta.json on top of a store full of data: the write
+   * counter went back to zero, so a reader could take a newer store for the
+   * snapshot it already held; and the schema version was stamped current before
+   * the store was opened, so the migration that checks it found nothing to do
+   * and an upgraded store kept its old tables. An existing store is opened, which
+   * migrates it, and never created over.
+   */
   static async create(dir: string, meta: Omit<StoreMeta, 'schemaVersion' | 'writeSeq'>): Promise<MemoryStore> {
+    if (MemoryStore.exists(dir)) {
+      throw new Error(
+        `A memory store already exists at ${dir}. Open it rather than creating over it; ` +
+          'creating would reset its write counter and skip its schema migration.',
+      );
+    }
     fs.mkdirSync(dir, { recursive: true });
     const full: StoreMeta = { ...meta, schemaVersion: SCHEMA_VERSION, writeSeq: 0 };
     writeMeta(dir, full);
@@ -821,6 +851,123 @@ export class MemoryStore {
         reason: 'external',
       });
     }
+  }
+
+  /**
+   * Removes everything a scan reproduces, and keeps everything somebody recorded.
+   *
+   * Reproducible: the artifact layer ingest writes, the code graph, the keyword
+   * index. Recorded: every other layer -- decisions, incidents, constraints,
+   * procedures, summaries -- and every edge between memories, because ingest
+   * writes none; each one is somebody's judgement that two things bear on each
+   * other.
+   *
+   * Two kinds of recorded link hang off reproducible things and would be lost
+   * with them: an edge to an artifact chunk, and a decision's ABOUT anchor on a
+   * declaration. They are returned so `restoreRecorded` can put them back once
+   * the scan has regenerated their endpoints. Chunk and symbol ids are derived
+   * from content and name, so an unchanged file regenerates the same ids.
+   *
+   * The keyword index is emptied and rebuilt from the memories that remain;
+   * ingest adds the regenerated chunks to it. Run inside a transaction.
+   */
+  async clearDerived(): Promise<{ links: RecordedLinks; cleared: number }> {
+    const edges: MemoryEdge[] = [];
+    for (const type of EDGE_TYPES) {
+      const rows = await this.run(
+        `MATCH (a:Memory)-[r:${type}]->(b:Memory)
+         WHERE a.layer = 'artifact' OR b.layer = 'artifact'
+         RETURN a.id AS from, b.id AS to, r.weight AS weight,
+                r.created_at AS createdAt, r.evidence_ref AS evidenceRef`,
+        {},
+      );
+      for (const row of rows) {
+        edges.push({
+          from: String(row.from),
+          to: String(row.to),
+          type,
+          weight: Number(row.weight ?? 1),
+          createdAt: Number(row.createdAt ?? 0),
+          evidenceRef: (row.evidenceRef as string) || null,
+        });
+      }
+    }
+
+    const anchors = (await this.run(
+      `MATCH (m:Memory)-[r:ABOUT]->(s:Symbol)
+       WHERE m.layer <> 'artifact'
+       RETURN m.id AS memoryId, s.id AS symbolId, r.weight AS weight, r.created_at AS createdAt`,
+      {},
+    )).map((row) => ({
+      memoryId: String(row.memoryId),
+      symbolId: String(row.symbolId),
+      weight: Number(row.weight ?? 1),
+      createdAt: Number(row.createdAt ?? 0),
+    }));
+
+    const counted = await this.run("MATCH (m:Memory) WHERE m.layer = 'artifact' RETURN count(m) AS n", {});
+    const cleared = Number((counted[0]?.n as number | bigint | undefined) ?? 0);
+
+    // A writable handle has migrated by the time it runs a statement, so every
+    // graph table exists here.
+    await this.run('MATCH (s:Symbol) DETACH DELETE s', {});
+    await this.run('MATCH (f:File) DETACH DELETE f', {});
+    await this.run('MATCH (p:PendingCall) DELETE p', {});
+    await this.run("MATCH (m:Memory) WHERE m.layer = 'artifact' DETACH DELETE m", {});
+
+    await this.run('MATCH (t:Bm25Term) DELETE t', {});
+    await this.run('MATCH (d:Bm25Doc) DELETE d', {});
+    await this.run('MATCH (s:Bm25Stat) DELETE s', {});
+    for (const node of await this.allNodes(true)) this.stageForIndex(node);
+
+    return { links: { edges, anchors }, cleared };
+  }
+
+  /**
+   * Puts back the recorded links `clearDerived` took down, where their endpoints
+   * came back.
+   *
+   * A link whose endpoint did not come back -- the chunk's text changed, the
+   * declaration was renamed or deleted -- is counted and returned, not silently
+   * dropped: it was somebody's judgement, and the person reading the report is
+   * the one who can decide whether to make it again.
+   */
+  async restoreRecorded(links: RecordedLinks): Promise<RestoreReport> {
+    const report: RestoreReport = { edges: 0, anchors: 0, droppedEdges: [], droppedAnchors: [] };
+
+    for (const edge of links.edges) {
+      const found = await this.run(
+        'MATCH (m:Memory) WHERE m.id = $a OR m.id = $b RETURN m.id AS id',
+        { a: edge.from, b: edge.to },
+      );
+      const present = new Set(found.map((row) => row.id as string));
+      if (!present.has(edge.from) || !present.has(edge.to)) {
+        report.droppedEdges.push(edge);
+        continue;
+      }
+      await this.addEdge(edge);
+      report.edges += 1;
+    }
+
+    for (const anchor of links.anchors) {
+      const found = await this.run(
+        `MATCH (m:Memory), (s:Symbol) WHERE m.id = $m AND s.id = $s
+         RETURN m.id AS id`,
+        { m: anchor.memoryId, s: anchor.symbolId },
+      );
+      if (found.length === 0) {
+        report.droppedAnchors.push(anchor);
+        continue;
+      }
+      await this.run(
+        `MATCH (m:Memory), (s:Symbol) WHERE m.id = $m AND s.id = $s
+         CREATE (m)-[:ABOUT {weight: $weight, created_at: $createdAt}]->(s)`,
+        { m: anchor.memoryId, s: anchor.symbolId, weight: anchor.weight, createdAt: anchor.createdAt },
+      );
+      report.anchors += 1;
+    }
+
+    return report;
   }
 
   /** Drops a file from the graph: its imports, its declares edge, then the row. */

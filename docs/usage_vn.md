@@ -106,9 +106,34 @@ astChunking        ok      web-tree-sitter -- 36 languages
 
 Model được tải bởi `node bin/setup.mjs` — đo thật: **130 MB** cho
 `Xenova/paraphrase-multilingual-MiniLM-L12-v2`, vào `<MEMORY_LAYER_HOME>/models`.
-Không lệnh nào khác tải nó, và không lệnh nào chạy khi thiếu nó: search, write
-và ingest từ chối kèm thông báo chỉ đích danh script setup. Máy nào đã chạy setup
-một lần thì sau đó chạy offline được.
+Setup, `init` và `embed` được phép tải nó; không lệnh nào khác tải, và không lệnh
+nào chạy khi thiếu nó: search, write và ingest từ chối kèm thông báo chỉ đích danh
+script setup. Máy nào đã chạy setup một lần thì sau đó chạy offline được.
+
+### Chạy lại `init`
+
+Trên dự án đã có kho, `init` **dựng lại** chứ không tạo mới. Mọi thứ lần quét
+sinh ra được — các chunk, code graph, chỉ mục từ khoá — bị xoá và đọc lại từ
+đầu, nên một luật vừa thêm vào `.memignore` có hiệu lực luôn với những gì đã
+index trước đó. Mọi thứ do người ghi thì **giữ nguyên**: quyết định, sự cố, ràng
+buộc, quy trình, tóm tắt, liên kết giữa chúng, liên kết từ chúng tới các chunk,
+và anchor của chúng lên khai báo trong code. Các memory được giữ lại sẽ được
+embed lại theo không gian của model hiện tại.
+
+Liên kết nào mà đầu kia không quay lại được — nội dung chunk đã đổi, khai báo đã
+đổi tên — thì không khôi phục được, và được **liệt kê theo id** chứ không bị bỏ
+ngầm; `init --json` liệt kê đủ.
+
+```bash
+dai-memory init              # dựng lại phần quét được, giữ phần người ghi
+dai-memory init --no-scan    # cập nhật kho, không dựng lại gì
+dai-memory init --fresh      # xoá hẳn kho, kể cả memory người ghi
+```
+
+`--fresh` là cách duy nhất làm mất memory người ghi qua `init`, và phải gõ rõ ra.
+Nó từ chối, không đổi gì, khi có tiến trình khác đang mở kho — một phiên Claude
+Code đang nạp plugin là như vậy — và từ chối kho nằm chung thư mục với registry
+và cache model.
 
 Rồi mở trang nó vừa ghi:
 

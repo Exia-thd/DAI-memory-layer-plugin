@@ -104,10 +104,35 @@ astChunking        ok      web-tree-sitter -- 36 languages
 The model is downloaded by `node bin/setup.mjs`, into
 `<MEMORY_LAYER_HOME>/models` -- measured at 130 MB for
 `Xenova/paraphrase-multilingual-MiniLM-L12-v2`, a minute or two on a home
-connection. Nothing else downloads it, and nothing runs without it: search,
-write and ingest refuse with a message naming the setup script. A machine that
-has run setup once works offline afterwards, and the cache can be copied to
-another machine.
+connection. Setup, `init` and `embed` may download it; nothing else does, and
+nothing runs without it: search, write and ingest refuse with a message naming
+the setup script. A machine that has run setup once works offline afterwards,
+and the cache can be copied to another machine.
+
+### Running `init` again
+
+On a project that already has a store, `init` rebuilds rather than creates.
+Everything a scan reproduces -- the chunks, the code graph, the keyword index --
+is cleared and read again from nothing, so a rule added to `.memignore` since
+the last scan takes effect on what was indexed before it. Everything somebody
+recorded is kept: decisions, incidents, constraints, procedures, summaries, the
+links between them, the links from them to scanned chunks, and their anchors on
+declarations. Kept memories are embedded again in the current model's space.
+
+A link whose endpoint does not come back -- the chunk's text changed, the
+declaration was renamed -- cannot be restored, and is listed by id rather than
+dropped quietly; `init --json` lists all of them.
+
+```bash
+dai-memory init              # rebuild what a scan produces, keep what was recorded
+dai-memory init --no-scan    # bring the store up to date, rebuild nothing
+dai-memory init --fresh      # remove the store entirely, recorded memories included
+```
+
+`--fresh` is the only way to lose recorded memory through `init`, and it has to
+be typed. It refuses, changing nothing, while another process has the store open
+-- a Claude Code session with the plugin loaded does -- and it refuses a store
+that shares its directory with the registry and model cache.
 
 Then load the project:
 

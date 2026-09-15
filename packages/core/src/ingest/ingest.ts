@@ -452,15 +452,16 @@ export async function ingest(
         embedding: null,
       };
 
+      // No vector, no chunk. This used to store the chunk without one, on the
+      // reasoning that it still helped the keyword branch -- which is the
+      // degradation the model requirement exists to refuse: a chunk found by
+      // wording and never by meaning, reported only in a log. A failure here
+      // stops the ingest with the chunk named. Files already written stay
+      // written, one transaction each, and the next ingest resumes after them.
       let vector: number[] | null = null;
       if (options.embedder) {
-        try {
-          vector = (await options.embedder.embed([`${title}\n${text}`]))[0] ?? null;
-        } catch (err) {
-          // The node is still worth storing; losing its vector costs recall on
-          // one branch, and is reported rather than aborting the whole ingest.
-          log('warn', `embedding failed for ${sourceRef}`, err);
-        }
+        vector = (await options.embedder.embed([`${title}\n${text}`]))[0] ?? null;
+        if (!vector) throw new Error(`The embedding model returned no vector for ${sourceRef}.`);
       }
 
       const covered = declared.filter(

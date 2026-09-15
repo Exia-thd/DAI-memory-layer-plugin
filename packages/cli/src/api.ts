@@ -3,6 +3,8 @@ import nodePath from 'node:path';
 import {
   MemoryStore, StoreLockedError, ingest, search, neighbors, clusters, conflicts, doctor,
   probeCapabilities, selectProvider, expectedIdentity, parseDimensions, upsertProject, journal,
+  readMeta, samePath, globalDir, PLUGIN_DIR_NAME, TOKENIZER_VERSION,
+  type StoreMeta,
   nodeId, redact, type EmbeddingProvider, type Layer, type EdgeType, type MemoryNode,
   type SearchResult, type Subgraph, type Conflict, type Cluster, type DoctorReport,
   type IngestReport, log,
@@ -44,65 +46,110 @@ export interface InitOptions {
   seed?: string[];
 }
 
+/**
+ * What `init` did to the store, in words a person can check.
+ *
+ * `created` is a new store. `rebuilt` means everything a scan reproduces was
+ * cleared and scanned again, and everything somebody recorded was kept.
+ * `refreshed` is `--no-scan` on an existing store: brought up to date, nothing
+ * rebuilt, because there was nothing to rebuild it from.
+ */
+export interface InitOutcome {
+  mode: 'created' | 'rebuilt' | 'refreshed';
+  /** True when `--fresh` removed an existing store first. */
+  wiped: boolean;
+  rebuild: null | {
+    cleared: number;
+    kept: number;
+    linksRestored: number;
+    anchorsRestored: number;
+    droppedLinks: Array<{ from: string; to: string; type: string }>;
+    droppedAnchors: Array<{ memoryId: string; symbolId: string }>;
+  };
+}
+
 export async function init(
-  options: InitOptions & { scan?: string[]; ui?: boolean } = {},
+  options: InitOptions & { scan?: string[]; ui?: boolean; fresh?: boolean } = {},
 ): Promise<{
   storeDir: string;
   report: DoctorReport;
   scanned: IngestReport | null;
   page: string | null;
+  outcome: InitOutcome;
 }> {
   const project = resolveProject(options.from);
   const dir = storeDirFor(project.root);
-  const dimensions = parseDimensions(options.dimensions ?? process.env.MEMORY_LAYER_DIMS);
+  const existing = MemoryStore.exists(dir) && !options.fresh;
 
-  // Capabilities are probed before anything is written, and recorded, so a broken
-  // backend is reported at init rather than discovered on a query that returns nothing.
-  // Noted before probing, because probing creates the directory: an `init` that
-  // refuses must not leave a `.memory` behind for somebody to read as a store.
-  const storeExisted = fs.existsSync(dir);
-  const capabilities = await probeCapabilities(dir);
+  // An existing store's width is a schema decision already taken. Asking for a
+  // different one is a request for a different store, which is what --fresh is.
+  let recorded: StoreMeta | null = null;
+  if (existing) {
+    try {
+      recorded = readMeta(dir);
+    } catch (err) {
+      throw new Error(
+        `${err instanceof Error ? err.message : String(err)}\n` +
+        'Run `init --fresh` to replace it. That removes the recorded memories too.',
+      );
+    }
+  }
+  const requested = options.dimensions ?? process.env.MEMORY_LAYER_DIMS;
+  const dimensions = recorded ? recorded.dimensions : parseDimensions(requested);
+  if (recorded && requested !== undefined && parseDimensions(requested) !== recorded.dimensions) {
+    throw new Error(
+      `This store holds ${recorded.dimensions}-dimension vectors, and width cannot change in ` +
+      'place. Run `init --fresh` to start a store of a different width -- that removes the ' +
+      'recorded memories too.',
+    );
+  }
 
-  // No store is created without an embedder, and by default that means the real
-  // model. `init` used to swallow this failure and carry on: the store was
-  // created, the embedding line said `null`, and everything downstream worked
-  // except the part that gives this project its name. Failing here costs one
-  // command; finding out later costs the store.
+  // The model comes before anything on disk is touched. Above all before --fresh
+  // removes a store: a wipe followed by a failed download is a person left with
+  // no store at all.
+  //
   // `init` may download: on a new machine it is the first command anyone runs.
   const choice = await selectProvider(dimensions, { allowDownload: true }).catch((err: unknown) => {
-    if (!storeExisted) {
-      // Only what this call made, and only while it is still empty. A directory
-      // with anything in it belongs to somebody else's run.
-      try {
-        if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
-      } catch {
-        // Tidiness is not worth replacing the real error with a filesystem one.
-      }
-    }
     throw new Error(
       `${err instanceof Error ? err.message : String(err)}\n\n` +
-      'No store was created. The embedding model is part of the install, not an ' +
-      'optional extra: a store built without it holds a project\'s history in a ' +
-      'vector space that cannot be compared with the real one.\n' +
+      (existing || MemoryStore.exists(dir)
+        ? 'Nothing was changed: the existing store is as it was.\n'
+        : 'No store was created. The embedding model is part of the install, not an ' +
+          'optional extra.\n') +
       'Run `node bin/setup.mjs` with network access, then `init` again.',
     );
   });
-  capabilities.embeddings = choice.capability;
   cachedProvider = choice;
+  const identity = choice.provider.identity;
 
-  // The store stays open from here to the end of init. A LadybugDB path opened
-  // once in a process cannot be opened a second time in it, so doctor has to run
-  // on this handle rather than on one of its own.
-  const store = await MemoryStore.create(dir, {
+  const wiped = Boolean(options.fresh) && MemoryStore.exists(dir);
+  if (wiped) removeStore(dir, project.root);
+
+  const capabilities = await probeCapabilities(dir);
+  capabilities.embeddings = choice.capability;
+
+  const projectMeta = {
     projectName: project.name,
     projectRoot: project.root,
     remoteUrl: project.remoteUrl,
     branch: project.branch,
     lastCommit: project.lastCommit,
-    dimensions,
-    embedding: { model: choice.provider.identity.model, provider: choice.provider.identity.provider },
     capabilities,
-  });
+  };
+
+  // The store stays open from here to the end of init. A LadybugDB path opened
+  // once in a process cannot be opened a second time in it, so doctor has to run
+  // on this handle rather than on one of its own.
+  //
+  // An existing store is opened, never created over: opening runs its schema
+  // migration, and creating reset its write counter.
+  const store = existing
+    ? new MemoryStore(dir)
+    : await MemoryStore.create(dir, {
+        ...projectMeta,
+        dimensions,
+        embedding: { model: identity.model, provider: identity.provider },
+      });
 
   ensureGitignore(project.root, '.memory');
   upsertProject({
@@ -115,6 +162,13 @@ export async function init(
     indexedAt: new Date().toISOString(),
   });
 
+  const scan = options.scan ?? [];
+  const outcome: InitOutcome = {
+    mode: existing ? (scan.length > 0 ? 'rebuilt' : 'refreshed') : 'created',
+    wiped,
+    rebuild: null,
+  };
+
   // Scanning happens on this handle, not a fresh one.
   //
   // A LadybugDB path can be opened for writing once per process, so an init that
@@ -122,15 +176,50 @@ export async function init(
   // is exactly what the first attempt did. Passing the open store through is the
   // only way to do both in one command.
   let scanned: IngestReport | null = null;
-  if (options.scan && options.scan.length > 0) {
-    scanned = await ingest(store, options.scan, {
-      layer: 'artifact',
-      force: false,
-      embedder: choice.provider,
+  if (outcome.mode === 'rebuilt') {
+    // Recorded memories keep their text and are embedded again in the current
+    // space: a vector is reproducible from its text, and a store whose kept
+    // memories sit in an older space than its new chunks is the drift doctor
+    // exists to catch. Embedded before the transaction, which holds the lock.
+    const kept = (await store.allNodes(true)).filter((node) => node.layer !== 'artifact');
+    const vectors = kept.length > 0
+      ? await choice.provider.embed(kept.map((node) => `${node.title}\n${node.body}`))
+      : [];
+
+    const cleared = await store.transact(async () => {
+      const result = await store.clearDerived();
+      for (let i = 0; i < kept.length; i++) {
+        const vector = vectors[i];
+        if (!vector) throw new Error(`The embedding model returned no vector for "${kept[i]!.title}".`);
+        await store.setEmbedding(kept[i]!.id, vector, identity);
+      }
+      return result;
+    }, {
+      ...projectMeta,
+      embedding: { model: identity.model, provider: identity.provider },
+      // Every file is read again: the chunks they produced are gone.
+      fileHashes: {},
+      tokenizerVersion: TOKENIZER_VERSION,
     });
+
+    scanned = await ingest(store, scan, { layer: 'artifact', force: false, embedder: choice.provider });
+    const restored = await store.transact(() => store.restoreRecorded(cleared.links));
+
+    outcome.rebuild = {
+      cleared: cleared.cleared,
+      kept: kept.length,
+      linksRestored: restored.edges,
+      anchorsRestored: restored.anchors,
+      droppedLinks: restored.droppedEdges.map(({ from, to, type }) => ({ from, to, type })),
+      droppedAnchors: restored.droppedAnchors.map(({ memoryId, symbolId }) => ({ memoryId, symbolId })),
+    };
+  } else if (outcome.mode === 'refreshed') {
+    await store.transact(async () => null, projectMeta);
+  } else if (scan.length > 0) {
+    scanned = await ingest(store, scan, { layer: 'artifact', force: false, embedder: choice.provider });
   }
 
-  const report = await doctor(store, choice.provider.identity);
+  const report = await doctor(store, identity);
 
   // Built here for the same reason the scan is: closing this handle does not
   // release the file at once on Windows, so a viewer that opened its own store
@@ -146,7 +235,50 @@ export async function init(
   }
 
   await store.close();
-  return { storeDir: dir, report, scanned, page };
+  return { storeDir: dir, report, scanned, page, outcome };
+}
+
+/**
+ * Removes a project's store for `init --fresh`, or refuses with nothing touched.
+ *
+ * Renamed first, deleted second. A store another process has open -- a Claude
+ * Code session with the plugin loaded holds it -- has locked files, and deleting
+ * in place would remove whatever was not locked and leave a store with its
+ * meta.json gone and its database still there. A rename of the directory either
+ * happens whole or fails whole.
+ *
+ * The target is checked to be this project's store directory and not the global
+ * one. A project rooted at the home directory would otherwise share a path with
+ * the registry and the model cache, and --fresh would take those with it.
+ */
+function removeStore(dir: string, projectRoot: string): void {
+  if (!samePath(dir, storeDirFor(projectRoot)) || nodePath.basename(dir) !== PLUGIN_DIR_NAME) {
+    throw new Error(`Refusing to remove ${dir}: it is not this project's memory store.`);
+  }
+  if (samePath(dir, globalDir())) {
+    throw new Error(
+      `Refusing to remove ${dir}: it is also the global directory holding the registry and the ` +
+      'model cache, so --fresh would remove those too.',
+    );
+  }
+
+  const aside = `${dir}.removing-${Date.now()}`;
+  try {
+    fs.renameSync(dir, aside);
+  } catch (err) {
+    throw new Error(
+      `Could not remove ${dir} (${err instanceof Error ? err.message : String(err)}). Nothing was ` +
+      'changed. Something has this store open -- usually a Claude Code session with the plugin ' +
+      'loaded. Close it and run `init --fresh` again.',
+    );
+  }
+  try {
+    fs.rmSync(aside, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch (err) {
+    // The store is already out of the way, so init can go on; what is left is
+    // disk space, and it is named rather than forgotten.
+    log('warn', `the previous store was moved to ${aside} but could not be deleted`, err);
+  }
 }
 
 export async function runIngest(

@@ -114,7 +114,7 @@ Hướng dẫn theo từng việc, kể cả nên tự động hoá cái gì và
 
 | Lệnh | Làm gì |
 |---|---|
-| `dai-memory init [paths...]` | Tạo kho, quét dự án, dựng code graph và trang xem |
+| `dai-memory init [paths...] [--fresh]` | Tạo kho, quét dự án, dựng code graph và trang xem. Chạy lại thì dựng lại phần quét được và giữ phần người ghi; `--fresh` xoá cả phần người ghi |
 | `dai-memory index <query>` | Chỉ tiêu đề, ~15 token mỗi mục — chọn trước khi đọc |
 | `dai-memory ingest [paths]` | Nạp file — không tham số thì tự quét dự án. Thay thế bản cũ, thu hồi thứ đã biến mất, ghi lại trang xem |
 | `dai-memory search <query>` | Truy hồi ba nhánh, kèm báo cáo hợp nhất |

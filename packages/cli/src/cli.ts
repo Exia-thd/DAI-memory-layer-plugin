@@ -104,9 +104,49 @@ function formatIgnored(ignored: IgnoredFile[], verbose: boolean): string {
   return lines.join('\n');
 }
 
+/**
+ * What init did, said so that a rebuild cannot be mistaken for a new store and a
+ * wipe cannot be mistaken for either.
+ *
+ * Links that did not survive a rebuild are listed by id. Each was somebody's
+ * judgement; a count alone would tell the reader something was lost without
+ * telling them what to look at.
+ */
+function describeInit(storeDir: string, outcome: api.InitOutcome): string {
+  const lines: string[] = [];
+  if (outcome.wiped) lines.push(`removed the previous store, recorded memories included (--fresh)`);
+
+  if (outcome.mode === 'created') {
+    lines.push(`store created at ${storeDir}`);
+  } else if (outcome.mode === 'refreshed') {
+    lines.push(
+      `store at ${storeDir} brought up to date; nothing rebuilt (--no-scan). ` +
+        'Run init without --no-scan to rebuild what a scan produces.',
+    );
+  } else if (outcome.rebuild) {
+    const r = outcome.rebuild;
+    lines.push(
+      `store at ${storeDir} rebuilt: ${r.cleared} scanned chunks cleared and read again.`,
+      `kept ${r.kept} recorded memories, with the links between them untouched; restored ` +
+        `${r.linksRestored} link(s) to scanned chunks and ${r.anchorsRestored} code anchor(s).`,
+    );
+    const dropped = r.droppedLinks.length + r.droppedAnchors.length;
+    if (dropped > 0) {
+      lines.push(`${dropped} recorded link(s) could not be restored -- what they pointed at no longer exists:`);
+      for (const link of r.droppedLinks.slice(0, 20)) lines.push(`   ${link.from} -${link.type}-> ${link.to}`);
+      for (const anchor of r.droppedAnchors.slice(0, 20)) lines.push(`   ${anchor.memoryId} ABOUT ${anchor.symbolId}`);
+      if (dropped > 40) lines.push(`   ... and more; --json lists them all`);
+    }
+  }
+  return lines.join('\n');
+}
+
 const USAGE = `dai-memory - project memory layer
 
-  dai-memory init [paths...] [--no-scan]  create the store, scan the project, build the viewer
+  dai-memory init [paths...] [--no-scan] [--fresh] [--json]
+                          create the store, scan the project, build the viewer.
+                          Run again to rebuild what a scan produces; recorded
+                          memories are kept. --fresh removes them as well.
   dai-memory ingest [paths...] [--layer L] [--force] [--no-ui]
                           [--verbose] [--quiet] [--max-file-size MB]  no paths: scan the project
   dai-memory embed [--force]              embed nodes missing a current vector
@@ -267,12 +307,17 @@ async function main(argv: string[]): Promise<number> {
       const targets = args.flags['no-scan'] ? [] : chooseScan(args);
 
 
-      const { storeDir, report, scanned, page } = await api.init({
+      const { storeDir, report, scanned, page, outcome } = await api.init({
         dimensions: stringFlag(args, 'dims'),
         scan: targets,
         ui: !args.flags['no-ui'],
+        fresh: Boolean(args.flags.fresh),
       });
-      process.stdout.write(`store created at ${storeDir}\n\n${formatReport(report)}\n`);
+      if (args.flags.json) {
+        process.stdout.write(`${JSON.stringify({ storeDir, outcome, report, scanned, page }, null, 2)}\n`);
+        return report.failed ? 1 : 0;
+      }
+      process.stdout.write(`${describeInit(storeDir, outcome)}\n\n${formatReport(report)}\n`);
       if (report.failed) {
         process.stderr.write('\ninit finished with failing checks; fix them before relying on search.\n');
         return 1;
