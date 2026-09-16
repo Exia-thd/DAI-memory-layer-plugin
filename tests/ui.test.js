@@ -249,3 +249,61 @@ test('a method hangs off its class, and clicking the class finds what is about i
     repo.cleanup();
   }
 });
+
+/**
+ * The camera: an opening move, an idle orbit, and a person who always wins.
+ *
+ * These assert the page ships the behaviour, not that it looks right -- a WebGL
+ * canvas cannot be read back, and a hidden one does not render at all. The
+ * behaviour itself was driven in a browser against a generated page of 2,203
+ * nodes: the orbit was on after the intro, a pointerdown stopped it, it was
+ * still stopped five seconds later, and twelve seconds after the click it was
+ * turning again. What these tests catch is the page losing the machinery.
+ */
+test('the page opens with a camera move and orbits until somebody touches it', () => {
+  const repo = seeded();
+  try {
+    const { html } = built(repo);
+
+    // Orbit controls: the ones with an axis, and the ones autoRotate belongs to.
+    assert.match(html, /ForceGraph3D\(\{ controlType: 'orbit' \}\)/);
+    assert.match(html, /autoRotate = on/);
+    // Centre first, then out to the whole graph -- following the layout while it
+    // is still spreading, because a fit taken at load frames a graph the size of
+    // a pea and then the graph grows out of frame.
+    assert.match(html, /cameraPosition\(\{ x: 0, y: 0, z: 40 \}/);
+    // Closer than a plain fit: the library's fitted distance, scaled. The
+    // padding knob it offers goes through an arctangent and runs out of range
+    // before the view is close.
+    assert.match(html, /var CLOSENESS = 0\.62;/);
+    assert.match(html, /fitted\.z \* CLOSENESS/);
+    assert.match(html, /frame\(ms\);/);
+    assert.match(html, /onEngineTick\(function \(\) \{/);
+    assert.match(html, /if \(!pullingOut \|\| !graphVisible\) return;/);
+    assert.match(html, /onEngineStop\(function \(\) \{/);
+    // Ten seconds of nothing brings it back.
+    assert.match(html, /var IDLE_MS = 10000;/);
+    for (const event of ['pointerdown', 'wheel', 'touchstart']) {
+      assert.ok(html.includes(`'${event}'`), `${event} does not stop the orbit`);
+    }
+    // Reachable from outside, which is the only way any of this can be checked.
+    assert.match(html, /window\.__MEMORY_GRAPH__ = graph;/);
+  } finally {
+    repo.cleanup();
+  }
+});
+
+test('the graph stops rendering when it is not the tab in front', () => {
+  // A canvas behind another panel is frames nobody sees. It cost nothing to
+  // leave running and nothing said it was, which is how it stayed that way.
+  const repo = seeded();
+  try {
+    const { html } = built(repo);
+    assert.match(html, /pauseAnimation\(\)/);
+    assert.match(html, /resumeAnimation\(\)/);
+    assert.match(html, /visibilitychange/);
+    assert.match(html, /if \(button\.dataset\.tab === 'graph'\) showGraph\(\);/);
+  } finally {
+    repo.cleanup();
+  }
+});

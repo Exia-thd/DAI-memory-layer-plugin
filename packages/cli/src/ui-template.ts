@@ -297,6 +297,14 @@ export function renderUi(payload: UiPayload): string {
         if (section.dataset.panel === button.dataset.tab) section.setAttribute('data-active', '');
         else section.removeAttribute('data-active');
       });
+      // A WebGL canvas goes on rendering while it sits behind another panel:
+      // the library's loop keeps asking for frames, the GPU keeps drawing them,
+      // and nobody can see any of it. It renders while it is the tab in front,
+      // and not otherwise -- and coming back to it replays the opening move, so
+      // the view is one somebody can read rather than wherever the camera was
+      // left.
+      if (button.dataset.tab === 'graph') showGraph();
+      else hideGraph();
     });
   });
 
@@ -349,7 +357,9 @@ export function renderUi(payload: UiPayload): string {
     document.getElementById('graph').style.display = 'none';
     document.getElementById('fallback').style.display = 'block';
   } else {
-    graph = ForceGraph3D()(document.getElementById('graph'))
+    // Orbit rather than the default trackball: it is the one with an axis, which
+    // is what makes an unattended turn look deliberate instead of a tumble.
+    graph = ForceGraph3D({ controlType: 'orbit' })(document.getElementById('graph'))
       .graphData({
         nodes: data.graph.nodes.map(function (n) { return Object.assign({}, n); }),
         links: data.graph.links.map(function (l) { return Object.assign({}, l); }),
@@ -377,6 +387,207 @@ export function renderUi(payload: UiPayload): string {
     });
     graph.width(window.innerWidth).height(window.innerHeight - 52);
   }
+
+  /**
+   * The opening move, the idle orbit, and the rule that a person always wins.
+   *
+   * A graph that opens wherever the layout happened to leave the camera reads as
+   * a mess; the same graph, seen from the middle and then pulled out to its full
+   * extent, reads as a shape. So: start at the centre, pull out to fit, and turn
+   * slowly. The turning is for nobody in particular -- it is what makes a still
+   * picture legible as a three-dimensional one -- so it stops the moment somebody
+   * touches the view, and comes back only after they have left it alone.
+   *
+   * Every one of these is off while the tab is in the background or the window
+   * is hidden. A camera animating into an invisible canvas is pure heat.
+   */
+  var IDLE_MS = 10000;
+  var idleTimer = null;
+  var introTimer = null;
+  var orbiting = false;
+  var graphVisible = true;
+  /** True while the opening pull-out is following the layout outwards. */
+  var pullingOut = false;
+  var settled = false;
+  var lastFit = 0;
+
+  function controls() { return graph && graph.controls ? graph.controls() : null; }
+
+  function orbit(on) {
+    var c = controls();
+    if (!c) return;
+    orbiting = on;
+    c.autoRotate = on;
+  }
+
+  /**
+   * How much of the library's own fitted distance the view actually sits at.
+   *
+   * A plain fit puts the whole graph on screen and a good deal of nothing around
+   * it, which at this scale reads as a smudge in the middle of a window. The
+   * obvious knob is zoomToFit's padding, and it is a bad one: the distance it
+   * computes goes through an arctangent, so doubling the padding buys about a
+   * tenth of the distance and the control runs out before the view is close.
+   * Scaling the distance it arrives at is linear and says what it means -- 0.62
+   * is a bit under two thirds of the way in from the fit.
+   */
+  var CLOSENESS = 0.62;
+
+  /**
+   * Frames the whole graph, closer.
+   *
+   * The library's fit is applied with no transition, read back, scaled, and the
+   * camera put back where it was -- all in one turn of the event loop, so no
+   * frame is ever drawn at the intermediate place and nothing flickers. Reusing
+   * its arithmetic rather than restating it here means the framing cannot drift
+   * from what zoomToFit would have done.
+   */
+  function frame(ms) {
+    if (!graph || !graphVisible) return;
+    var before = graph.cameraPosition();
+    graph.zoomToFit(0, 0);
+    var fitted = graph.cameraPosition();
+    graph.cameraPosition({ x: before.x, y: before.y, z: before.z }, undefined, 0);
+    graph.cameraPosition({
+      x: fitted.x * CLOSENESS,
+      y: fitted.y * CLOSENESS,
+      z: fitted.z * CLOSENESS,
+    }, { x: 0, y: 0, z: 0 }, ms);
+  }
+
+  /** Pull out to the whole graph, then turn. Used by the intro and by going idle. */
+  function overview(ms) {
+    if (!graph || !graphVisible) return;
+    pullingOut = false;
+    frame(ms);
+    clearTimeout(introTimer);
+    introTimer = setTimeout(function () { orbit(true); }, ms + 60);
+  }
+
+  /**
+   * The opening pull-out, which has to follow a graph that is still growing.
+   *
+   * A layout starts collapsed around the origin and spreads over the seconds
+   * that follow. Fitting the view once, at load, fits that first tight ball --
+   * and then the graph grows out of frame while the camera sits where it was
+   * put, which reads as an opening move that never happened. It did happen; it
+   * framed a graph the size of a pea.
+   *
+   * So the camera keeps fitting, a few times a second, for as long as the
+   * engine is still moving nodes: the view pulls outwards because the graph is
+   * pushing outwards. When the engine stops, one last fit settles it and the
+   * turn begins.
+   */
+  function intro() {
+    if (!graph || !graphVisible) return;
+    orbit(false);
+    clearTimeout(introTimer);
+    // At the centre first, looking out from inside the graph. Distance rather
+    // than zero, because a camera exactly on the origin has nothing to look at
+    // and the first frame flickers.
+    graph.cameraPosition({ x: 0, y: 0, z: 40 }, { x: 0, y: 0, z: 0 }, 0);
+
+    if (settled) {
+      // Nothing is moving any more -- coming back to the tab, or a small graph
+      // that finished before anyone looked. One fit is the whole pull-out.
+      overview(1600);
+      return;
+    }
+    pullingOut = true;
+    lastFit = 0;
+  }
+
+  /** A person did something. The orbit stops until they stop. */
+  function interacted() {
+    if (!graphVisible) return;
+    clearTimeout(introTimer);
+    // Their view now, not the camera's: the pull-out stops following as well,
+    // or the layout would drag the frame around under their hands.
+    pullingOut = false;
+    orbit(false);
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(function () { overview(1200); }, IDLE_MS);
+  }
+
+  function showGraph() {
+    if (!graph) return;
+    graphVisible = true;
+    graph.resumeAnimation();
+    intro();
+  }
+
+  function hideGraph() {
+    if (!graph) return;
+    graphVisible = false;
+    pullingOut = false;
+    clearTimeout(idleTimer);
+    clearTimeout(introTimer);
+    orbit(false);
+    graph.pauseAnimation();
+  }
+
+  function startCamera() {
+    var canvas = document.getElementById('graph');
+
+    // Four fits a second while the layout expands: enough that the pull-out
+    // looks continuous, few enough that measuring the graph's extent is not
+    // what the frame budget goes on.
+    graph.onEngineTick(function () {
+      if (!pullingOut || !graphVisible) return;
+      var now = Date.now();
+      if (now - lastFit < 250) return;
+      lastFit = now;
+      frame(260);
+    });
+
+    graph.onEngineStop(function () {
+      settled = true;
+      if (!pullingOut || !graphVisible) return;
+      overview(900);
+    });
+    // pointerdown rather than click: dragging the view is the commonest way to
+    // take hold of it, and it must stop the orbit at the first movement rather
+    // than when the button comes back up.
+    ['pointerdown', 'wheel', 'touchstart'].forEach(function (name) {
+      canvas.addEventListener(name, interacted, { passive: true });
+    });
+    document.addEventListener('keydown', function () { if (graphVisible) interacted(); });
+
+    // A hidden window still runs requestAnimationFrame in some browsers, and a
+    // backgrounded tab that keeps a GPU busy is the kind of thing people notice
+    // on a laptop battery and never trace back.
+    document.addEventListener('visibilitychange', function () {
+      var active = document.querySelector('section[data-panel="graph"][data-active]');
+      if (document.hidden) { graph.pauseAnimation(); clearTimeout(idleTimer); clearTimeout(introTimer); }
+      else if (active) {
+        graph.resumeAnimation();
+        // A page opened in a background tab has had no frames, so its layout
+        // has not moved and its opening move has not run. Coming to it for the
+        // first time should play that move, not count as somebody taking hold
+        // of a view they have not seen yet.
+        if (settled) interacted();
+        else intro();
+      }
+    });
+
+    intro();
+  }
+
+  // After the definitions, not inside the block above: a var hoists its name
+  // and not its value, so calling this any earlier ran it with graphVisible
+  // still undefined and the opening move never played.
+  if (graph) startCamera();
+
+  // The graph instance, reachable from outside the page.
+  //
+  // Not for the page itself, which closes over it: for checking it. Everything
+  // this file does to the camera -- the opening pull-out, the idle orbit, the
+  // stop on a click -- is invisible to anything that can only read the DOM, and
+  // a WebGL canvas cannot be read back at all. A test that cannot see the camera
+  // can only assert that the code mentioning it exists, which is not the same
+  // claim. Read-only by convention; nothing here reads it back.
+  window.__MEMORY_GRAPH__ = graph;
+
 
   /**
    * Which memories a node is about.
