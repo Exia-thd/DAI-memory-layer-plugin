@@ -341,4 +341,9 @@ ký ức semantic thì không. Phân rã là hạ hạng, không phải xoá.
 
 ## Giấy phép
 
-MIT
+MIT — xem [LICENSE](LICENSE). Copyright (c) 2026 Dat Tran Huu.
+
+Bốn grammar tree-sitter nằm trong `packages/core/grammars/` do chính nhóm bảo trì
+của chúng build, và giữ giấy phép MIT riêng của chúng; văn bản giấy phép nằm ở
+`packages/core/grammars/licenses/`, còn nguồn gốc — phiên bản, commit, SHA-256 —
+nằm trong README của thư mục đó.

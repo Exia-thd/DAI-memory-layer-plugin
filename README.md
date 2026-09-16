@@ -348,4 +348,9 @@ semantic ones do not. Decay demotes; it does not remove.
 
 ## Licence
 
-MIT
+MIT — see [LICENSE](LICENSE). Copyright (c) 2026 Dat Tran Huu.
+
+The four tree-sitter grammars vendored in `packages/core/grammars/` are built by
+their own maintainers and stay under their own MIT licences, with the text in
+`packages/core/grammars/licenses/` and their provenance — version, commit,
+SHA-256 — in that directory's README.

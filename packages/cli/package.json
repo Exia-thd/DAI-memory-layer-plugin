@@ -1,6 +1,7 @@
 {
   "name": "@memory-layer/cli",
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "bin": { "dai-memory": "./dist/cli.js" },
   "files": ["dist"],
