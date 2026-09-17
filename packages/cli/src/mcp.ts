@@ -151,6 +151,63 @@ const TOOLS = [
     },
   },
   {
+    name: 'dai_memory_impact',
+    description:
+      'What breaks if a declaration changes. Upstream lists its dependents (callers, derived ' +
+      'types, callers of its members) by distance: d=1 WILL BREAK, d=2 LIKELY AFFECTED, d=3 MAY ' +
+      'NEED TESTING, each with the confidence of the edge that reached it, plus the files that ' +
+      'import it and a risk level with its reasons. Downstream lists what it depends on. Run it ' +
+      'before editing a function, class or method. A name that fits several declarations comes ' +
+      'back as ranked candidates to choose from with `uid`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'A name, `Class.method`, or `file:qualified`.' },
+        uid: { type: 'string', description: 'Exact declaration id, from a candidate list.' },
+        file: { type: 'string', description: 'Narrow the name to files ending with this path.' },
+        direction: { type: 'string', enum: ['upstream', 'downstream'] },
+        maxDepth: { type: 'number', description: '1-5, default 3.' },
+        minConfidence: { type: 'number', description: '0-1; edges below it are counted, not followed.' },
+        includeTests: { type: 'boolean', description: 'List test declarations too (default false).' },
+      },
+    },
+  },
+  {
+    name: 'dai_memory_context',
+    description:
+      'Everything around one declaration: what encloses it, its members, who calls it, what it ' +
+      'calls, the types it derives from and those derived from it, its file\'s imports and ' +
+      'importers, and the memory recorded about it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        uid: { type: 'string' },
+        file: { type: 'string' },
+      },
+    },
+  },
+  {
+    name: 'dai_memory_trace',
+    description:
+      'How one declaration reaches another: the shortest path over calls, entering types through ' +
+      'their members. With no path, says where the chain breaks and whether the depth limit cut ' +
+      'the search short.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        from: { type: 'string' },
+        to: { type: 'string' },
+        from_file: { type: 'string' },
+        to_file: { type: 'string' },
+        from_uid: { type: 'string' },
+        to_uid: { type: 'string' },
+        maxDepth: { type: 'number', description: '1-30, default 10.' },
+        includeTests: { type: 'boolean' },
+      },
+    },
+  },
+  {
     name: 'dai_memory_clusters',
     description:
       'Groups of related memories, with the summary somebody wrote for each group ' +
@@ -380,6 +437,34 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<un
       return args.format === 'mermaid' ? { mermaid: formatMapMermaid(map) } : map;
     }
 
+    case 'dai_memory_impact': {
+      const { runImpact } = await import('./code.js');
+      const direction = args.direction === 'downstream' ? 'downstream' : 'upstream';
+      return runImpact(
+        { name: optionalString(args.target), uid: optionalString(args.uid), file: optionalString(args.file) },
+        {
+          direction,
+          maxDepth: numeric(args.maxDepth),
+          minConfidence: numeric(args.minConfidence),
+          includeTests: args.includeTests === true,
+        },
+      );
+    }
+
+    case 'dai_memory_context': {
+      const { runContext } = await import('./code.js');
+      return runContext({ name: optionalString(args.name), uid: optionalString(args.uid), file: optionalString(args.file) });
+    }
+
+    case 'dai_memory_trace': {
+      const { runTrace } = await import('./code.js');
+      return runTrace(
+        { name: optionalString(args.from), uid: optionalString(args.from_uid), file: optionalString(args.from_file) },
+        { name: optionalString(args.to), uid: optionalString(args.to_uid), file: optionalString(args.to_file) },
+        { maxDepth: numeric(args.maxDepth), includeTests: args.includeTests === true },
+      );
+    }
+
     case 'dai_memory_clusters':
       return { clusters: await api.runClusters() };
 
@@ -429,6 +514,10 @@ function withFreshness<T extends object>(result: T): T & { index?: object } {
   } catch {
     return result;
   }
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
 function numeric(value: unknown): number | undefined {

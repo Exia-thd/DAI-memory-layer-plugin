@@ -129,6 +129,9 @@ A task-by-task guide is in [docs/usage.md](docs/usage.md).
 | `dai-memory constraints` | What this project has already settled |
 | `dai-memory conflicts` | Contradictions a person needs to resolve |
 | `dai-memory map [path] [--format mermaid]` | The code graph: files, declarations, what calls what, and the memory about each |
+| `dai-memory impact <symbol> [--direction D] [--depth N]` | What breaks if it changes: dependents by distance (d=1 WILL BREAK, d=2 LIKELY AFFECTED, d=3 MAY NEED TESTING), with confidence and a risk level |
+| `dai-memory context <symbol>` | One declaration from every side: container, members, callers, callees, base and derived types, imports, memory |
+| `dai-memory trace <from> <to>` | The shortest call path between two declarations, or where the chain breaks |
 | `dai-memory clusters` | Communities in the memory graph, with any stored summary |
 | `dai-memory summarize <id> --body S` | Record a summary for a group, linked to its members |
 | `dai-memory session start\|end` | Open or close a session, so writes record when they happened |

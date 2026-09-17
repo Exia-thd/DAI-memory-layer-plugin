@@ -44,6 +44,13 @@ export { search, clearSearchCache, DEFAULT_STALE_AFTER_DAYS, type SearchOptions 
 export { neighbors, DEFAULT_DEPTH, MAX_DEPTH, type Subgraph, type TraverseOptions } from './graph/traverse.js';
 export { clusters, type Cluster } from './graph/cluster.js';
 export { conflicts, type Conflict } from './graph/conflicts.js';
+export {
+  loadCodeIndex, resolveTarget, impact, context as symbolContext, trace, isTestPath,
+  confidenceScore, CONFIDENCE_SCORE, DEPTH_LABELS, MAX_IMPACT_DEPTH, MAX_TRACE_DEPTH,
+  type CodeIndex, type TargetQuery, type Resolution, type ImpactResult, type ImpactHit,
+  type ImpactOptions, type ContextResult, type TraceResult, type TraceOptions, type SymbolRef,
+  type Direction, type RiskLevel,
+} from './graph/code.js';
 
 export { doctor, formatReport, type DoctorReport, type Check } from './doctor.js';
 

@@ -160,6 +160,13 @@ const USAGE = `dai-memory - project memory layer
   dai-memory constraints [--limit N]      decisions in force, most important first
   dai-memory changes [--scope S] [--base R]  what memory records about your changed files
   dai-memory map [path] [--format tree|mermaid]  the code graph: files, declarations, memory
+  dai-memory impact <symbol> [--direction upstream|downstream] [--depth 1-5] [--min-confidence 0-1]
+                          [--file F] [--uid ID] [--include-tests] [--json]
+                          what breaks if it changes, by distance, with a risk level
+  dai-memory context <symbol> [--file F] [--uid ID] [--json]
+                          callers, callees, types, members, imports and memory for one declaration
+  dai-memory trace <from> <to> [--depth N] [--from-file F] [--to-file F] [--include-tests] [--json]
+                          the shortest call path between two declarations
   dai-memory prune [--older-than 90] [--dry-run]  forget old, unreferenced episodic memories
   dai-memory ui [path] [--out FILE] [--max-nodes N]
                                           build a browser view of the graph and the store
@@ -532,6 +539,59 @@ reclaimed ${report.vanished} file(s) no longer on disk` : '') +
         format === 'mermaid' ? formatMapMermaid(map) : formatMapTree(map),
       );
       return 0;
+    }
+
+    case 'impact':
+    case 'context':
+    case 'trace': {
+      const code = await import('./code.js');
+      const target = (name: string | undefined, fileFlag: string, uidFlag?: string) => ({
+        name, file: stringFlag(args, fileFlag), uid: uidFlag ? stringFlag(args, uidFlag) : undefined,
+      });
+
+      // Every one of the three answers with a status; the formatters take the
+      // shape that status implies.
+      let result: { status: string };
+      if (command === 'impact') {
+        const raw = (stringFlag(args, 'direction') ?? 'upstream').toLowerCase();
+        const direction = raw === 'up' || raw === 'upstream' ? 'upstream'
+          : raw === 'down' || raw === 'downstream' ? 'downstream' : null;
+        if (!direction) throw new Error(`--direction is upstream or downstream, got ${JSON.stringify(raw)}`);
+        if (!args.positional[0] && !stringFlag(args, 'uid')) throw new Error('impact needs a symbol name or --uid');
+        result = await code.runImpact(target(args.positional[0], 'file', 'uid'), {
+          direction,
+          maxDepth: numberFlag(args, 'depth'),
+          minConfidence: numberFlag(args, 'min-confidence'),
+          includeTests: Boolean(args.flags['include-tests']),
+        });
+        if (result.status === 'ok') {
+          emit(args, result, () => code.formatImpact(result as never));
+          return 0;
+        }
+      } else if (command === 'context') {
+        if (!args.positional[0] && !stringFlag(args, 'uid')) throw new Error('context needs a symbol name or --uid');
+        result = await code.runContext(target(args.positional[0], 'file', 'uid'));
+        if (result.status === 'ok') {
+          emit(args, result, () => code.formatContext(result as never));
+          return 0;
+        }
+      } else {
+        if (args.positional.length < 2) throw new Error('trace needs <from> and <to>');
+        result = await code.runTrace(
+          target(args.positional[0], 'from-file'),
+          target(args.positional[1], 'to-file'),
+          { maxDepth: numberFlag(args, 'depth'), includeTests: Boolean(args.flags['include-tests']) },
+        );
+        if (result.status === 'ok' || result.status === 'no_path') {
+          emit(args, result, () => code.formatTrace(result as never));
+          // No path is an answer, not a failure: it says where the chain breaks.
+          return 0;
+        }
+      }
+      // A name that fits nothing, or several things, is not an answer to the
+      // question asked. Exiting non-zero lets a script tell it from one.
+      emit(args, result, () => code.formatUnresolved(result as never));
+      return 1;
     }
 
     case 'changes': {

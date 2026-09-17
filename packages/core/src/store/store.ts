@@ -1511,6 +1511,22 @@ export class MemoryStore {
     return rows as unknown as Array<{ from: string; to: string; name: string; line: number; confidence: string }>;
   }
 
+  /** Every declaration, for the code-intelligence index. */
+  async allSymbols(): Promise<SymbolRow[]> {
+    if (!this.graphReady) return [];
+    const rows = await this.run(
+      `MATCH (s:Symbol)
+       RETURN s.id AS id, s.name AS name, s.file_path AS filePath, s.kind AS kind,
+              s.start_line AS startLine, s.end_line AS endLine`,
+      {},
+    );
+    return (rows as unknown as SymbolRow[]).map((row) => ({
+      ...row,
+      startLine: Number(row.startLine ?? 0),
+      endLine: Number(row.endLine ?? 0),
+    }));
+  }
+
   async symbolsInFile(filePath: string): Promise<SymbolRow[]> {
     const rows = await this.run(
       `MATCH (s:Symbol) WHERE s.file_path = $filePath

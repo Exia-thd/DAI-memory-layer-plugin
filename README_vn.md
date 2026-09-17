@@ -125,6 +125,9 @@ Hướng dẫn theo từng việc, kể cả nên tự động hoá cái gì và
 | `dai-memory constraints` | Những gì dự án đã chốt |
 | `dai-memory conflicts` | Mâu thuẫn cần người quyết |
 | `dai-memory map [path] [--format mermaid]` | Code graph: file, khai báo, cái gì gọi cái gì, và ký ức về từng cái |
+| `dai-memory impact <symbol> [--direction D] [--depth N]` | Sửa nó thì vỡ gì: các nơi phụ thuộc theo khoảng cách (d=1 SẼ VỠ, d=2 CÓ THỂ ẢNH HƯỞNG, d=3 NÊN TEST LẠI), kèm độ tin cậy và mức rủi ro |
+| `dai-memory context <symbol>` | Một khai báo nhìn từ mọi phía: nằm trong gì, thành viên, ai gọi, gọi ai, lớp cha và lớp con, import, ký ức |
+| `dai-memory trace <from> <to>` | Đường gọi ngắn nhất giữa hai khai báo, hoặc chuỗi đứt ở đâu |
 | `dai-memory clusters` | Cụm trong đồ thị ký ức, kèm tóm tắt nếu có |
 | `dai-memory summarize <id> --body S` | Ghi tóm tắt cho một cụm, nối vào các thành viên |
 | `dai-memory session start\|end` | Mở/đóng phiên, để lệnh ghi biết nó xảy ra lúc nào |
