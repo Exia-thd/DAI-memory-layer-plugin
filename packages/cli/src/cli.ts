@@ -167,7 +167,7 @@ const USAGE = `dai-memory - project memory layer
   dai-memory summarize <clusterId> --body S   record a summary for a group of memories
   dai-memory conflicts [--json]           contradictions needing a person
   dai-memory clusters [--json]            communities in the memory graph
-  dai-memory write --layer L --title T --body B --source-ref R [--link ID:TYPE]
+  dai-memory write --layer L --title T --body B --source-ref R [--link ID:TYPE] [--importance 0-10]
   dai-memory link <from> <to> <TYPE> [--weight W]
   dai-memory merge                        fold queued session writes into the store
   dai-memory eval [--top N] [--json]      score retrieval against .memory-eval.json
@@ -625,7 +625,14 @@ reclaimed ${report.vanished} file(s) no longer on disk` : '') +
           return { to, type: edgeType(type) };
         });
 
-      const result = await api.runWrite({ layer, title, body, sourceRef, links });
+      // Range-checked here rather than clamped: a caller asking for 50 has a
+      // different scale in mind, and quietly storing 10 would hide that.
+      const importance = numberFlag(args, 'importance');
+      if (importance !== undefined && (importance < 0 || importance > 10)) {
+        throw new Error(`--importance is 0-10, got ${importance}`);
+      }
+
+      const result = await api.runWrite({ layer, title, body, sourceRef, links, importance });
       emit(args, result, () =>
         `${result.id}${result.queued ? ' (queued: the store was locked, run `dai-memory merge`)' : ''}` +
         (result.about.length > 0 ? `\nanchored to ${result.about.join(', ')}` : '') +
