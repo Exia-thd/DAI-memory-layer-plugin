@@ -49,8 +49,16 @@ export {
   confidenceScore, CONFIDENCE_SCORE, DEPTH_LABELS, MAX_IMPACT_DEPTH, MAX_TRACE_DEPTH,
   type CodeIndex, type TargetQuery, type Resolution, type ImpactResult, type ImpactHit,
   type ImpactOptions, type ContextResult, type TraceResult, type TraceOptions, type SymbolRef,
-  type Direction, type RiskLevel,
+  type Direction, type RiskLevel, type ProcessReport,
 } from './graph/code.js';
+export {
+  buildProcesses, entryPoints, resolveProcess, processesFor,
+  MAX_PROCESS_DEPTH, MAX_PROCESS_STEPS, MAX_PROCESSES,
+  type Process, type ProcessStep, type ProcessIndex, type ProcessOptions, type ProcessResolution,
+} from './graph/process.js';
+export {
+  query, type QueryResult, type QueryGroup, type QueryHit, type QueryOptions,
+} from './graph/query.js';
 
 export { doctor, formatReport, type DoctorReport, type Check } from './doctor.js';
 

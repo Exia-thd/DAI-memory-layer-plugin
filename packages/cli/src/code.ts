@@ -1,7 +1,9 @@
 import {
   MemoryStore, loadCodeIndex, resolveTarget, impact, symbolContext, trace,
+  buildProcesses, resolveProcess, query,
   type TargetQuery, type ImpactOptions, type ImpactResult, type ContextResult,
   type TraceResult, type TraceOptions, type Resolution, type CodeIndex, type SymbolRef,
+  type ProcessIndex, type Process, type QueryResult,
 } from '@memory-layer/core';
 import { storeDirOrThrow } from './project.js';
 
@@ -36,21 +38,101 @@ async function withIndex<T>(from: string | undefined, work: (store: MemoryStore,
   }
 }
 
+/**
+ * Flows are built unless they were turned off. They cost one forward walk per
+ * entry point over an index that is already in memory, and an impact answer
+ * that cannot say which flows run through a change is the answer the harness
+ * most often needs.
+ */
+function flowsFor(index: CodeIndex, options: { flows?: boolean; includeTests?: boolean }): ProcessIndex | undefined {
+  if (options.flows === false) return undefined;
+  return buildProcesses(index, { includeTests: options.includeTests });
+}
+
 export async function runImpact(
   target: TargetQuery,
-  options: ImpactOptions & { from?: string } = {},
+  options: ImpactOptions & { from?: string; flows?: boolean } = {},
 ): Promise<ImpactResult | Unresolved> {
   return withIndex(options.from, async (_store, index) => {
     const resolution = resolveTarget(index, target);
-    return unresolved('target', target, resolution) ?? impact(index, (resolution as { id: string }).id, options);
+    return unresolved('target', target, resolution)
+      ?? impact(index, (resolution as { id: string }).id, { ...options, processes: flowsFor(index, options) });
   });
 }
 
-export async function runContext(target: TargetQuery, options: { from?: string } = {}): Promise<ContextResult | Unresolved> {
+export async function runContext(
+  target: TargetQuery,
+  options: { from?: string; flows?: boolean } = {},
+): Promise<ContextResult | Unresolved> {
   return withIndex(options.from, async (store, index) => {
     const resolution = resolveTarget(index, target);
     return unresolved('target', target, resolution)
-      ?? symbolContext(store, index, (resolution as { id: string }).id);
+      ?? symbolContext(store, index, (resolution as { id: string }).id, flowsFor(index, options));
+  });
+}
+
+export interface ProcessListResult {
+  status: 'ok';
+  processes: Array<{ id: string; name: string; filePath: string; startLine: number; steps: number; depth: number; truncated: boolean }>;
+  summary: { entryPoints: number; processes: number; shown: number; truncated: boolean; rule: string };
+}
+
+export async function runProcesses(
+  options: { from?: string; limit?: number; includeTests?: boolean } = {},
+): Promise<ProcessListResult> {
+  return withIndex(options.from, async (_store, index) => {
+    const flows = buildProcesses(index, { includeTests: options.includeTests });
+    const limit = Math.max(1, Math.floor(options.limit ?? 30));
+    return {
+      status: 'ok' as const,
+      processes: flows.processes.slice(0, limit).map((process) => ({
+        id: process.id,
+        name: process.name,
+        filePath: process.entry.filePath,
+        startLine: process.entry.startLine,
+        steps: process.steps.length,
+        depth: process.depth,
+        truncated: process.truncated,
+      })),
+      summary: {
+        entryPoints: flows.entryPoints,
+        processes: flows.processes.length,
+        shown: Math.min(limit, flows.processes.length),
+        truncated: flows.truncated,
+        rule: 'an entry point is a declaration nothing in this repository calls, which calls other declarations',
+      },
+    };
+  });
+}
+
+export type ProcessUnresolved =
+  | { status: 'not_found'; role: 'process'; asked: string; suggestions: Array<{ id: string; name: string; filePath: string; steps: number }> }
+  | { status: 'ambiguous'; role: 'process'; asked: string; candidates: Array<{ id: string; name: string; filePath: string; steps: number }> };
+
+export async function runProcess(
+  name: string,
+  options: { from?: string; includeTests?: boolean } = {},
+): Promise<(Process & { status: 'ok' }) | ProcessUnresolved> {
+  return withIndex(options.from, async (_store, index) => {
+    const flows = buildProcesses(index, { includeTests: options.includeTests });
+    const resolution = resolveProcess(flows, name);
+    if (resolution.status === 'ambiguous') {
+      return { status: 'ambiguous' as const, role: 'process' as const, asked: name, candidates: resolution.candidates };
+    }
+    if (resolution.status === 'not_found') {
+      return { status: 'not_found' as const, role: 'process' as const, asked: name, suggestions: resolution.suggestions };
+    }
+    return { status: 'ok' as const, ...flows.byId.get(resolution.id)! };
+  });
+}
+
+export async function runQuery(
+  text: string,
+  options: { from?: string; limit?: number; includeTests?: boolean } = {},
+): Promise<QueryResult> {
+  return withIndex(options.from, async (store, index) => {
+    const flows = buildProcesses(index, { includeTests: options.includeTests });
+    return query(store, index, flows, text, { limit: options.limit, includeTests: options.includeTests });
   });
 }
 
@@ -115,8 +197,16 @@ export function formatImpact(result: ImpactResult): string {
     ...(summary.testsSkipped > 0 ? [`${summary.testsSkipped} test declaration(s) left out (--include-tests to list them)`] : []),
     ...(summary.belowConfidence > 0 ? [`${summary.belowConfidence} edge(s) below the confidence floor ${result.minConfidence}`] : []),
     `processes: ${result.processes.note}`,
+    ...formatProcessReport(result.processes),
   );
   return lines.join('\n');
+}
+
+/** The flows an answer touches, listed under the sentence that counts them. */
+function formatProcessReport(report: ImpactResult['processes']): string[] {
+  if (report.status !== 'ok' || report.items.length === 0) return [];
+  return report.items.slice(0, 10).map((item) =>
+    `  - ${item.name}  ${item.filePath}  (${item.steps} step(s)${item.depth === null ? '' : `, entered at d=${item.depth}`})`);
 }
 
 export function formatContext(result: ContextResult): string {
@@ -141,6 +231,7 @@ export function formatContext(result: ContextResult): string {
     lines.push('', 'recorded about it:');
     for (const memory of result.memories) lines.push(`  [${memory.layer}] ${memory.title}  (${memory.sourceRef})`);
   }
+  lines.push('', `execution flows: ${result.processes.note}`, ...formatProcessReport(result.processes));
   return lines.join('\n');
 }
 
@@ -158,5 +249,75 @@ export function formatTrace(result: TraceResult): string {
     const via = edge ? `  <- ${edge.relType}${edge.relType === 'CALLS' ? ` ${percent(edge.confidence)}` : ''}` : '';
     lines.push(`  ${i}. ${hop.qualified}  ${where(hop)}${via}`);
   });
+  return lines.join('\n');
+}
+
+export function formatProcesses(result: ProcessListResult): string {
+  const lines = [`${result.summary.processes} execution flow(s) from ${result.summary.entryPoints} entry point(s)`, ''];
+  for (const process of result.processes) {
+    lines.push(`  ${process.name}  ${process.filePath}:${process.startLine}  (${process.steps} step(s), depth ${process.depth}${process.truncated ? ', truncated' : ''})`);
+  }
+  lines.push(
+    '',
+    `rule: ${result.summary.rule}`,
+    ...(result.summary.shown < result.summary.processes
+      ? [`showing ${result.summary.shown} of ${result.summary.processes} (--limit for more)`]
+      : []),
+    ...(result.summary.truncated
+      ? ['more entry points than the build limit: the flows with the most calls were kept']
+      : []),
+  );
+  return lines.join('\n');
+}
+
+export function formatProcess(result: Process & { status: 'ok' }): string {
+  const lines = [
+    `${result.name}  ${result.entry.filePath}:${result.entry.startLine}`,
+    `entry point because ${result.reason}`,
+    '',
+  ];
+  let depth = 0;
+  for (const step of result.steps) {
+    if (step.depth !== depth) {
+      depth = step.depth;
+      lines.push(`d=${depth}:`);
+    }
+    lines.push(`  ${step.qualified}  ${where(step, step.line)}  [${step.via}, ${percent(step.confidence)}]`);
+  }
+  if (result.truncated) lines.push('', 'the walk stopped at its limit with calls left unfollowed');
+  return lines.join('\n');
+}
+
+export function formatProcessUnresolved(result: ProcessUnresolved): string {
+  if (result.status === 'not_found') {
+    const lines = [`no execution flow named ${JSON.stringify(result.asked)}`];
+    if (result.suggestions.length > 0) {
+      lines.push('did you mean:');
+      for (const item of result.suggestions) lines.push(`  ${item.name}  ${item.filePath}  (${item.steps} step(s))`);
+    }
+    return lines.join('\n');
+  }
+  return [
+    `${JSON.stringify(result.asked)} names ${result.candidates.length} execution flows -- say which:`,
+    ...result.candidates.map((item) => `  ${item.name}  ${item.filePath}  (${item.steps} step(s))   ${item.id}`),
+  ].join('\n');
+}
+
+export function formatQuery(result: QueryResult): string {
+  if (result.groups.length === 0) {
+    return `nothing in the code graph matches ${JSON.stringify(result.query)}`;
+  }
+  const lines: string[] = [];
+  for (const group of result.groups) {
+    lines.push(group.process
+      ? `flow: ${group.process.name}  ${group.process.filePath}  (${group.process.steps} step(s))`
+      : 'in no execution flow that was built (nothing reaches them, or the flow that would stopped at its limit):');
+    for (const hit of group.hits) {
+      lines.push(`  ${hit.qualified}  ${where(hit)}  [${percent(hit.score)} on ${hit.matched.join('+')}]`);
+    }
+    for (const memory of group.memories) lines.push(`  recorded: [${memory.layer}] ${memory.title}`);
+    lines.push('');
+  }
+  lines.push(`${result.summary.symbols} declaration(s) in ${result.summary.processes} flow(s); ${result.summary.unassigned} in none`);
   return lines.join('\n');
 }

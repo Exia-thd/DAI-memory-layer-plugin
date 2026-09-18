@@ -208,6 +208,45 @@ const TOOLS = [
     },
   },
   {
+    name: 'dai_memory_query',
+    description:
+      'Ask the code graph in words and get back the execution flows the answer runs in, rather ' +
+      'than a list of files. Declarations that match but belong to no flow come back in their own ' +
+      'group, so unreachable code is visible rather than dropped.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+        limit: { type: 'number', description: '1-200, default 20.' },
+        includeTests: { type: 'boolean' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'dai_memory_processes',
+    description:
+      'Every execution flow in this repository: an entry point -- a declaration nothing here calls, ' +
+      'which calls others -- and what it reaches. Use it to learn what a codebase does before ' +
+      'changing it. The rule that found the entry points is reported with the answer.',
+    inputSchema: {
+      type: 'object',
+      properties: { limit: { type: 'number' }, includeTests: { type: 'boolean' } },
+    },
+  },
+  {
+    name: 'dai_memory_process',
+    description:
+      'One execution flow, step by step, with each step\'s distance from the entry point and the ' +
+      'confidence of the call that reached it. A name that fits several flows is answered with all ' +
+      'of them rather than a guess.',
+    inputSchema: {
+      type: 'object',
+      properties: { name: { type: 'string' }, includeTests: { type: 'boolean' } },
+      required: ['name'],
+    },
+  },
+  {
     name: 'dai_memory_clusters',
     description:
       'Groups of related memories, with the summary somebody wrote for each group ' +
@@ -463,6 +502,27 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<un
         { name: optionalString(args.to), uid: optionalString(args.to_uid), file: optionalString(args.to_file) },
         { maxDepth: numeric(args.maxDepth), includeTests: args.includeTests === true },
       );
+    }
+
+    case 'dai_memory_query': {
+      const { runQuery } = await import('./code.js');
+      if (typeof args.query !== 'string' || !args.query.trim()) {
+        throw new Error('dai_memory_query needs a query.');
+      }
+      return runQuery(args.query, { limit: numeric(args.limit), includeTests: args.includeTests === true });
+    }
+
+    case 'dai_memory_processes': {
+      const { runProcesses } = await import('./code.js');
+      return runProcesses({ limit: numeric(args.limit), includeTests: args.includeTests === true });
+    }
+
+    case 'dai_memory_process': {
+      const { runProcess } = await import('./code.js');
+      if (typeof args.name !== 'string' || !args.name.trim()) {
+        throw new Error('dai_memory_process needs the name of an execution flow.');
+      }
+      return runProcess(args.name, { includeTests: args.includeTests === true });
     }
 
     case 'dai_memory_clusters':

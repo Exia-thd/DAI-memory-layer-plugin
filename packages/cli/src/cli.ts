@@ -166,6 +166,12 @@ const USAGE = `dai-memory - project memory layer
   dai-memory context <symbol> [--file F] [--uid ID] [--json]
                           callers, callees, types, members, imports and memory for one declaration
   dai-memory trace <from> <to> [--depth N] [--from-file F] [--to-file F] [--include-tests] [--json]
+  dai-memory query <words...> [--limit N] [--include-tests] [--json]
+      What answers to these words, grouped by the execution flow it runs in.
+  dai-memory processes [--limit N] [--include-tests] [--json]
+      Every execution flow: an entry point and what it reaches.
+  dai-memory process <name> [--include-tests] [--json]
+      One flow, step by step.
                           the shortest call path between two declarations
   dai-memory prune [--older-than 90] [--dry-run]  forget old, unreferenced episodic memories
   dai-memory ui [path] [--out FILE] [--max-nodes N]
@@ -563,6 +569,7 @@ reclaimed ${report.vanished} file(s) no longer on disk` : '') +
           maxDepth: numberFlag(args, 'depth'),
           minConfidence: numberFlag(args, 'min-confidence'),
           includeTests: Boolean(args.flags['include-tests']),
+          flows: !args.flags['no-flows'],
         });
         if (result.status === 'ok') {
           emit(args, result, () => code.formatImpact(result as never));
@@ -570,7 +577,9 @@ reclaimed ${report.vanished} file(s) no longer on disk` : '') +
         }
       } else if (command === 'context') {
         if (!args.positional[0] && !stringFlag(args, 'uid')) throw new Error('context needs a symbol name or --uid');
-        result = await code.runContext(target(args.positional[0], 'file', 'uid'));
+        result = await code.runContext(target(args.positional[0], 'file', 'uid'), {
+          flows: !args.flags['no-flows'],
+        });
         if (result.status === 'ok') {
           emit(args, result, () => code.formatContext(result as never));
           return 0;
@@ -592,6 +601,41 @@ reclaimed ${report.vanished} file(s) no longer on disk` : '') +
       // question asked. Exiting non-zero lets a script tell it from one.
       emit(args, result, () => code.formatUnresolved(result as never));
       return 1;
+    }
+
+    case 'processes': {
+      const code = await import('./code.js');
+      const list = await code.runProcesses({
+        limit: numberFlag(args, 'limit'),
+        includeTests: Boolean(args.flags['include-tests']),
+      });
+      emit(args, list, () => code.formatProcesses(list));
+      return 0;
+    }
+
+    case 'process': {
+      if (!args.positional[0]) throw new Error('process needs the name of an execution flow');
+      const code = await import('./code.js');
+      const flow = await code.runProcess(args.positional[0], {
+        includeTests: Boolean(args.flags['include-tests']),
+      });
+      if (flow.status === 'ok') {
+        emit(args, flow, () => code.formatProcess(flow as never));
+        return 0;
+      }
+      emit(args, flow, () => code.formatProcessUnresolved(flow as never));
+      return 1;
+    }
+
+    case 'query': {
+      if (!args.positional[0]) throw new Error('query needs something to look for');
+      const code = await import('./code.js');
+      const found = await code.runQuery(args.positional.join(' '), {
+        limit: numberFlag(args, 'limit'),
+        includeTests: Boolean(args.flags['include-tests']),
+      });
+      emit(args, found, () => code.formatQuery(found));
+      return 0;
     }
 
     case 'changes': {

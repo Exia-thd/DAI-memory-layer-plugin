@@ -23,8 +23,8 @@ change-impact on every commit, and seven of its skills call `impact` and
 | # | Milestone | Tools and commands | State |
 |---|---|---|---|
 | M1 | Traversal core | `impact` (up/downstream, depth 1–3 with WILL BREAK / LIKELY AFFECTED / MAY NEED TESTING, confidence floor, risk level), `context` (callers, callees, base and derived types, file imports, memory about it), `trace` (shortest path between two symbols); ambiguous names answer with ranked candidates | **done** — CLI and MCP (`dai_memory_impact`, `dai_memory_context`, `dai_memory_trace`) |
-| M2 | Execution flows | entry points, forward traces stored as processes; `query` grouped by process; processes in `context` and `impact`; `processes` and `process/{name}` resources | next |
-| M3 | Change analysis | `detect_changes` (unstaged / staged / all / compare against a base ref: diff hunks → changed symbols → blast radius → affected processes → risk), `pr_review` (breaking changes, affected modules, reviewers); the harness gate switches to it | planned |
+| M2 | Execution flows | entry points, forward traces stored as processes; `query` grouped by process; processes in `context` and `impact`; `processes` and `process/{name}` resources | **done** — CLI and MCP (`dai_memory_query`, `dai_memory_processes`, `dai_memory_process`); the MCP resources themselves arrive with M5 |
+| M3 | Change analysis | `detect_changes` (unstaged / staged / all / compare against a base ref: diff hunks → changed symbols → blast radius → affected processes → risk), `pr_review` (breaking changes, affected modules, reviewers); the harness gate switches to it | next |
 | M4 | Rename | `rename` — graph-backed edits with confidence, text-search edits flagged separately, dry run by default, refuses an ambiguous target | planned |
 | M5 | Graph access and housekeeping | read-only `cypher` and the `schema` resource; `check` (circular imports and other invariants); paginated `list_repos`; `status`, `clean`; code communities and the `clusters` / `cluster/{name}` resources | planned |
 | M6 | API surface | route extraction across the common web frameworks; `route_map`, `shape_check`, `api_impact`, `tool_map` | planned |

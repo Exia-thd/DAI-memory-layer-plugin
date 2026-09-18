@@ -128,6 +128,9 @@ Hướng dẫn theo từng việc, kể cả nên tự động hoá cái gì và
 | `dai-memory impact <symbol> [--direction D] [--depth N]` | Sửa nó thì vỡ gì: các nơi phụ thuộc theo khoảng cách (d=1 SẼ VỠ, d=2 CÓ THỂ ẢNH HƯỞNG, d=3 NÊN TEST LẠI), kèm độ tin cậy và mức rủi ro |
 | `dai-memory context <symbol>` | Một khai báo nhìn từ mọi phía: nằm trong gì, thành viên, ai gọi, gọi ai, lớp cha và lớp con, import, ký ức |
 | `dai-memory trace <from> <to>` | Đường gọi ngắn nhất giữa hai khai báo, hoặc chuỗi đứt ở đâu |
+| `dai-memory query <words...>` | Cái gì trả lời cho mấy từ này, gom theo luồng thực thi chứa nó |
+| `dai-memory processes [--limit N]` | Mọi luồng thực thi: điểm vào, và nó chạy tới đâu |
+| `dai-memory process <name>` | Một luồng, từng bước, kèm khoảng cách của mỗi bước tới điểm vào |
 | `dai-memory clusters` | Cụm trong đồ thị ký ức, kèm tóm tắt nếu có |
 | `dai-memory summarize <id> --body S` | Ghi tóm tắt cho một cụm, nối vào các thành viên |
 | `dai-memory session start\|end` | Mở/đóng phiên, để lệnh ghi biết nó xảy ra lúc nào |

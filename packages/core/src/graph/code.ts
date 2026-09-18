@@ -1,5 +1,7 @@
 import type { MemoryStore } from '../store/store.js';
 import type { MemoryNode, SymbolRow } from '../types.js';
+import type { ProcessIndex } from './process.js';
+import { processesFor } from './process.js';
 
 /**
  * Questions about code, answered from the code graph: what reaches a
@@ -258,6 +260,36 @@ export interface ImpactOptions {
   maxDepth?: number;
   minConfidence?: number;
   includeTests?: boolean;
+  /**
+   * The execution flows to report against. Left out, the answer says flows
+   * were not computed rather than that none are affected.
+   */
+  processes?: ProcessIndex;
+}
+
+/** Execution flows touching an answer, or a statement that none were built. */
+export type ProcessReport =
+  | {
+      status: 'ok';
+      items: Array<{ id: string; name: string; filePath: string; steps: number; depth: number | null }>;
+      note: string;
+    }
+  | { status: 'not_computed'; note: string };
+
+const NOT_COMPUTED: ProcessReport = {
+  status: 'not_computed',
+  note: 'Execution flows were not built for this answer, so none are listed. That is not the same as none being affected.',
+};
+
+function processReport(
+  index: ProcessIndex | undefined,
+  symbolIds: Iterable<string>,
+  note: (count: number) => string,
+): ProcessReport {
+  if (!index) return NOT_COMPUTED;
+  const items = processesFor(index, symbolIds)
+    .map(({ id, name, filePath, steps, depth }) => ({ id, name, filePath, steps, depth }));
+  return { status: 'ok', items, note: note(items.length) };
 }
 
 export const MAX_IMPACT_DEPTH = 5;
@@ -289,8 +321,7 @@ export interface ImpactResult {
     /** Which rule set the risk, in words. */
     reasons: string[];
   };
-  /** Execution flows are not computed yet; said, rather than returned empty. */
-  processes: { status: 'not_computed'; note: string };
+  processes: ProcessReport;
 }
 
 /**
@@ -399,10 +430,13 @@ export function impact(index: CodeIndex, targetId: string, options: ImpactOption
     ),
     files,
     summary: { symbols, files: files.length, testsSkipped, belowConfidence, risk, reasons },
-    processes: {
-      status: 'not_computed',
-      note: 'Execution flows are not built yet, so no process is listed. That is not the same as none being affected.',
-    },
+    processes: processReport(
+      options.processes,
+      [targetId, ...Object.values(byDepth).flat().map((hit) => hit.id)],
+      (count) => count === 0
+        ? 'No execution flow reaches this declaration or anything that depends on it.'
+        : `${count} execution flow(s) run through this change.`,
+    ),
   };
 }
 
@@ -425,7 +459,7 @@ export interface ContextResult {
   derived: Reference[];
   file: { path: string; imports: string[]; importedBy: string[] };
   memories: Array<Pick<MemoryNode, 'id' | 'title' | 'layer' | 'sourceRef' | 'importance'>>;
-  processes: { status: 'not_computed'; note: string };
+  processes: ProcessReport;
 }
 
 function references(index: CodeIndex, edges: Edge[] | undefined): Reference[] {
@@ -438,7 +472,12 @@ function references(index: CodeIndex, edges: Edge[] | undefined): Reference[] {
 }
 
 /** One declaration from every side: what surrounds it, uses it, and what it uses. */
-export async function context(store: MemoryStore, index: CodeIndex, targetId: string): Promise<ContextResult> {
+export async function context(
+  store: MemoryStore,
+  index: CodeIndex,
+  targetId: string,
+  processes?: ProcessIndex,
+): Promise<ContextResult> {
   const symbol = index.symbols.get(targetId)!;
   const parent = index.parent.get(targetId);
   const memories = await store.nodesAboutSymbolIds([targetId, ...(index.children.get(targetId) ?? [])], 20);
@@ -460,10 +499,13 @@ export async function context(store: MemoryStore, index: CodeIndex, targetId: st
     memories: memories.map((node) => ({
       id: node.id, title: node.title, layer: node.layer, sourceRef: node.sourceRef, importance: node.importance,
     })),
-    processes: {
-      status: 'not_computed',
-      note: 'Execution flows are not built yet, so no process is listed.',
-    },
+    processes: processReport(
+      processes,
+      [targetId, ...(index.children.get(targetId) ?? [])],
+      (count) => count === 0
+        ? 'This declaration takes part in no execution flow that was built.'
+        : `It takes part in ${count} execution flow(s).`,
+    ),
   };
 }
 

@@ -158,9 +158,15 @@ test('files that import the target are listed with it', () => {
   assert.deepEqual(result.files.map((file) => file.path), ['src/api/middleware.ts', 'src/auth/login.ts']);
 });
 
-test('execution flows are declared missing, not returned empty', () => {
+test('execution flows are reported, and their absence is declared rather than implied', () => {
   const result = json(['impact', 'validateUser']);
-  assert.equal(result.processes.status, 'not_computed');
+  assert.equal(result.processes.status, 'ok');
+  assert.ok(result.processes.items.length > 0, JSON.stringify(result.processes));
+
+  // Asked not to build them, the answer says so instead of showing none.
+  const off = json(['impact', 'validateUser', '--no-flows']);
+  assert.equal(off.processes.status, 'not_computed');
+  assert.match(off.processes.note, /not the same as none being affected/);
 });
 
 test('a name that fits two declarations is answered with both, ranked, and exits non-zero', () => {
