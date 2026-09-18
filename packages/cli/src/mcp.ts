@@ -247,6 +247,38 @@ const TOOLS = [
     },
   },
   {
+    name: 'dai_memory_detect_changes',
+    description:
+      'What the current diff changes, in declarations rather than lines: which indexed declarations '
+      + 'the hunks touched, what depends on each, which execution flows run through them, and the risk. '
+      + 'Run it before committing. Hunks that match no indexed declaration are counted and reported, '
+      + 'and a stale graph is declared rather than silently trusted.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: { type: 'string', description: 'staged (default), working, or compare.' },
+        base: { type: 'string', description: 'The ref to compare against when scope is compare.' },
+        maxDepth: { type: 'number', description: '1-3, default 2.' },
+        includeTests: { type: 'boolean' },
+      },
+    },
+  },
+  {
+    name: 'dai_memory_review',
+    description:
+      'This branch as a reviewer wants it: what can break code outside the file it was changed in, '
+      + 'which modules it lands in, and who has committed to those files before. The last of those is '
+      + 'history, not a recommendation, and the answer says so.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        base: { type: 'string', description: 'The ref this branch is compared against. Default HEAD.' },
+        maxDepth: { type: 'number' },
+        includeTests: { type: 'boolean' },
+      },
+    },
+  },
+  {
     name: 'dai_memory_clusters',
     description:
       'Groups of related memories, with the summary somebody wrote for each group ' +
@@ -523,6 +555,29 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<un
         throw new Error('dai_memory_process needs the name of an execution flow.');
       }
       return runProcess(args.name, { includeTests: args.includeTests === true });
+    }
+
+    case 'dai_memory_detect_changes': {
+      const { runDetectChanges } = await import('./code.js');
+      const scope = typeof args.scope === 'string' ? args.scope : 'staged';
+      if (!['staged', 'working', 'compare'].includes(scope)) {
+        throw new Error('dai_memory_detect_changes scope is staged, working or compare.');
+      }
+      return runDetectChanges({
+        scope: scope as 'staged' | 'working' | 'compare',
+        baseRef: optionalString(args.base),
+        maxDepth: numeric(args.maxDepth),
+        includeTests: args.includeTests === true,
+      });
+    }
+
+    case 'dai_memory_review': {
+      const { runReview } = await import('./code.js');
+      return runReview({
+        baseRef: optionalString(args.base),
+        maxDepth: numeric(args.maxDepth),
+        includeTests: args.includeTests === true,
+      });
     }
 
     case 'dai_memory_clusters':

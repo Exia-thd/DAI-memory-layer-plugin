@@ -59,6 +59,11 @@ export {
 export {
   query, type QueryResult, type QueryGroup, type QueryHit, type QueryOptions,
 } from './graph/query.js';
+export {
+  detectChanges, review, moduleOf,
+  type Hunk, type DetectChangesResult, type DetectChangesOptions, type ChangedSymbol,
+  type ChangedFile, type ReviewResult, type ReviewOptions,
+} from './graph/changes.js';
 
 export { doctor, formatReport, type DoctorReport, type Check } from './doctor.js';
 

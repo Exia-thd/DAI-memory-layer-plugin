@@ -172,6 +172,10 @@ const USAGE = `dai-memory - project memory layer
       Every execution flow: an entry point and what it reaches.
   dai-memory process <name> [--include-tests] [--json]
       One flow, step by step.
+  dai-memory detect-changes [--scope staged|working|compare] [--base REF] [--depth 1-3] [--json]
+      What a diff changes in declarations: dependents, flows and risk.
+  dai-memory review [--base REF] [--depth 1-3] [--json]
+      A branch as a reviewer wants it: what can break, where, and who has worked there.
                           the shortest call path between two declarations
   dai-memory prune [--older-than 90] [--dry-run]  forget old, unreferenced episodic memories
   dai-memory ui [path] [--out FILE] [--max-nodes N]
@@ -635,6 +639,32 @@ reclaimed ${report.vanished} file(s) no longer on disk` : '') +
         includeTests: Boolean(args.flags['include-tests']),
       });
       emit(args, found, () => code.formatQuery(found));
+      return 0;
+    }
+
+    case 'detect-changes': {
+      const code = await import('./code.js');
+      const scope = (stringFlag(args, 'scope') ?? 'staged') as 'staged' | 'working' | 'compare';
+      const result = await code.runDetectChanges({
+        scope,
+        baseRef: stringFlag(args, 'base'),
+        maxDepth: numberFlag(args, 'depth'),
+        includeTests: Boolean(args.flags['include-tests']),
+        flows: !args.flags['no-flows'],
+      });
+      emit(args, result, () => code.formatDetectChanges(result));
+      return 0;
+    }
+
+    case 'review': {
+      const code = await import('./code.js');
+      const result = await code.runReview({
+        baseRef: stringFlag(args, 'base'),
+        maxDepth: numberFlag(args, 'depth'),
+        includeTests: Boolean(args.flags['include-tests']),
+        flows: !args.flags['no-flows'],
+      });
+      emit(args, result, () => code.formatReview(result));
       return 0;
     }
 

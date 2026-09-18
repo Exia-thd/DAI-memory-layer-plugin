@@ -4,7 +4,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
-import { locateStore, storeDirFor, MemoryStore, readMeta } from '@memory-layer/core';
+import { locateStore, storeDirFor, MemoryStore, readMeta, type Hunk } from '@memory-layer/core';
 
 export interface ProjectInfo {
   root: string;
@@ -190,3 +190,87 @@ export function ensureGitignore(root: string, entry: string): void {
 }
 
 export { storeDirFor };
+
+/**
+ * The changed line ranges, not just which files changed.
+ *
+ * `--unified=0` so a hunk covers the changed lines and nothing around them:
+ * three lines of context either side would attribute a change to whatever
+ * declaration happens to sit next to it. Rename detection is on, and a rename
+ * with edits reports the edits against the new path.
+ *
+ * Null, as everywhere else here, means git failed -- which must never be read
+ * as "nothing changed".
+ */
+export function changedHunks(
+  root: string,
+  scope: 'staged' | 'working' | 'compare',
+  baseRef?: string,
+): Hunk[] | null {
+  const range =
+    scope === 'staged' ? ['--cached']
+      : scope === 'compare' ? [`${baseRef ?? 'HEAD'}...HEAD`]
+        : ['HEAD'];
+  const out = git(['diff', '--unified=0', '--find-renames', '--no-color', ...range], root);
+  if (out === null) return null;
+  return parseHunks(out);
+}
+
+const STATUS_BY_PREFIX: Record<string, Hunk['status']> = {
+  'new file': 'added',
+  'deleted file': 'deleted',
+  'rename to': 'renamed',
+};
+
+/** `git diff --unified=0` output, as hunks. Exported for its own tests. */
+export function parseHunks(diff: string): Hunk[] {
+  const hunks: Hunk[] = [];
+  let file: string | null = null;
+  let status: Hunk['status'] = 'modified';
+
+  for (const line of diff.split(/\r?\n/)) {
+    if (line.startsWith('diff --git ')) {
+      // Take the b/ path: for a rename it is where the code lives now.
+      const match = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
+      file = match ? match[2]! : null;
+      status = 'modified';
+      continue;
+    }
+    for (const [prefix, value] of Object.entries(STATUS_BY_PREFIX)) {
+      if (line.startsWith(prefix)) status = value;
+    }
+    if (!line.startsWith('@@') || !file) continue;
+    const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    if (!match) continue;
+    hunks.push({
+      file,
+      status,
+      oldStart: Number(match[1]),
+      oldLines: match[2] === undefined ? 1 : Number(match[2]),
+      newStart: Number(match[3]),
+      newLines: match[4] === undefined ? 1 : Number(match[4]),
+    });
+  }
+  return hunks;
+}
+
+/**
+ * Who has committed to each of these files, most recent 100 commits.
+ *
+ * History, not judgement: it says who has worked here, and the answer that uses
+ * it has to say the same.
+ */
+export function fileAuthors(root: string, files: string[]): Map<string, Array<{ name: string; commits: number }>> {
+  const byFile = new Map<string, Array<{ name: string; commits: number }>>();
+  for (const file of files) {
+    const out = git(['log', '-n', '100', '--format=%an', '--', file], root);
+    if (out === null || out === '') continue;
+    const counts = new Map<string, number>();
+    for (const name of out.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)) {
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    byFile.set(file, [...counts].map(([name, commits]) => ({ name, commits }))
+      .sort((a, b) => b.commits - a.commits));
+  }
+  return byFile;
+}

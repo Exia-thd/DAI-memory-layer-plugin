@@ -131,6 +131,8 @@ Hướng dẫn theo từng việc, kể cả nên tự động hoá cái gì và
 | `dai-memory query <words...>` | Cái gì trả lời cho mấy từ này, gom theo luồng thực thi chứa nó |
 | `dai-memory processes [--limit N]` | Mọi luồng thực thi: điểm vào, và nó chạy tới đâu |
 | `dai-memory process <name>` | Một luồng, từng bước, kèm khoảng cách của mỗi bước tới điểm vào |
+| `dai-memory detect-changes [--scope S] [--base REF]` | Một diff đổi những khai báo nào: ai phụ thuộc, luồng nào chạy qua, mức rủi ro, và phần nó không thấy được |
+| `dai-memory review [--base REF]` | Nhánh này dưới mắt người review: cái gì làm vỡ file khác, đụng module nào, ai từng làm ở đó |
 | `dai-memory clusters` | Cụm trong đồ thị ký ức, kèm tóm tắt nếu có |
 | `dai-memory summarize <id> --body S` | Ghi tóm tắt cho một cụm, nối vào các thành viên |
 | `dai-memory session start\|end` | Mở/đóng phiên, để lệnh ghi biết nó xảy ra lúc nào |

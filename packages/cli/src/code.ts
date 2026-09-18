@@ -1,11 +1,12 @@
 import {
   MemoryStore, loadCodeIndex, resolveTarget, impact, symbolContext, trace,
-  buildProcesses, resolveProcess, query,
+  buildProcesses, resolveProcess, query, detectChanges, review,
   type TargetQuery, type ImpactOptions, type ImpactResult, type ContextResult,
   type TraceResult, type TraceOptions, type Resolution, type CodeIndex, type SymbolRef,
   type ProcessIndex, type Process, type QueryResult,
+  type DetectChangesResult, type ReviewResult,
 } from '@memory-layer/core';
-import { storeDirOrThrow } from './project.js';
+import { storeDirOrThrow, resolveProject, changedHunks, fileAuthors, isStale } from './project.js';
 
 /**
  * Impact, context and trace, for the CLI and the MCP server alike.
@@ -319,5 +320,101 @@ export function formatQuery(result: QueryResult): string {
     lines.push('');
   }
   lines.push(`${result.summary.symbols} declaration(s) in ${result.summary.processes} flow(s); ${result.summary.unassigned} in none`);
+  return lines.join('\n');
+}
+
+export type ChangeScope = 'staged' | 'working' | 'compare';
+
+/**
+ * A diff, read as declarations. Git is called here; the analysis itself is in
+ * core and needs no repository.
+ */
+export async function runDetectChanges(
+  options: { from?: string; scope?: ChangeScope; baseRef?: string; maxDepth?: number; includeTests?: boolean; flows?: boolean } = {},
+): Promise<DetectChangesResult> {
+  const scope = options.scope ?? 'staged';
+  const project = resolveProject(options.from);
+  const hunks = changedHunks(project.root, scope, options.baseRef);
+  if (hunks === null) {
+    throw new Error(
+      `Could not read ${scope} changes from git in ${project.root}. An unborn branch or a bad base ref `
+      + 'reports no changes, which would read as "nothing to check".',
+    );
+  }
+  return withIndex(options.from, async (_store, index) => {
+    const result = detectChanges(index, hunks, scope, {
+      maxDepth: options.maxDepth,
+      includeTests: options.includeTests,
+      processes: flowsFor(index, options),
+    });
+    // The graph was built from a commit. If the working tree has moved on, the
+    // line numbers this matched against are the old ones, and saying so is the
+    // difference between an answer and a confident wrong answer.
+    const staleness = isStale(storeDirOrThrow(options.from));
+    if (staleness.stale) {
+      result.limits.unshift(
+        `The code graph was built at ${staleness.indexed ?? 'an unknown commit'} and HEAD is ${staleness.head ?? 'unknown'};`
+        + ' declarations that moved since then may be matched at their old lines. Run `dai-memory ingest` to refresh.',
+      );
+    }
+    return result;
+  });
+}
+
+export async function runReview(
+  options: { from?: string; baseRef?: string; maxDepth?: number; includeTests?: boolean; flows?: boolean } = {},
+): Promise<ReviewResult> {
+  const base = options.baseRef ?? 'HEAD';
+  const changes = await runDetectChanges({ ...options, scope: 'compare', baseRef: base });
+  const project = resolveProject(options.from);
+  return review(changes, base, { history: fileAuthors(project.root, changes.files.map((file) => file.file)) });
+}
+
+export function formatDetectChanges(result: DetectChangesResult): string {
+  const lines = [`${result.scope} changes: ${result.summary.symbols} declaration(s) in ${result.summary.files} file(s)`, ''];
+  if (result.symbols.length === 0) {
+    lines.push('no indexed declaration was touched');
+  }
+  for (const symbol of result.symbols) {
+    const touched = symbol.touched.map((range) => range.start === range.end ? `${range.start}` : `${range.start}-${range.end}`).join(', ');
+    lines.push(`  ${symbol.change === 'removed' ? 'REMOVED ' : ''}${symbol.qualified}  ${symbol.filePath}:${touched}`);
+    lines.push(`    ${symbol.dependents.total} dependent(s) within reach, ${symbol.dependents.external} outside this file -- risk ${symbol.dependents.risk}`);
+    for (const ref of symbol.dependents.direct.slice(0, 5)) {
+      lines.push(`      <- ${ref.qualified}  ${ref.filePath}:${ref.startLine}`);
+    }
+    for (const process of symbol.processes.slice(0, 3)) {
+      lines.push(`      flow: ${process.name}  ${process.filePath}`);
+    }
+  }
+  lines.push('', `risk: ${result.summary.risk} -- ${result.summary.reasons.join('; ')}`);
+  for (const limit of result.limits) lines.push(`note: ${limit}`);
+  return lines.join('\n');
+}
+
+export function formatReview(result: ReviewResult): string {
+  const lines = [`review against ${result.base}: risk ${result.summary.risk}`, ''];
+  if (result.breaking.length === 0) {
+    lines.push('nothing here can break code outside the file it was changed in');
+  } else {
+    lines.push(`can break other code (${result.breaking.length}):`);
+    for (const item of result.breaking) {
+      lines.push(`  ${item.symbol.qualified}  ${item.symbol.filePath}  -- ${item.reason}`);
+      for (const ref of item.dependents.slice(0, 5)) lines.push(`      <- ${ref.qualified}  ${ref.filePath}:${ref.startLine}`);
+    }
+  }
+  if (result.modules.length > 0) {
+    lines.push('', 'modules touched:');
+    for (const module of result.modules) {
+      lines.push(`  ${module.module}  (${module.files} file(s), ${module.symbols} declaration(s))`);
+    }
+  }
+  if (result.reviewers.length > 0) {
+    lines.push('', 'who has worked here:');
+    for (const reviewer of result.reviewers) {
+      lines.push(`  ${reviewer.name}  (${reviewer.commits} commit(s) across ${reviewer.files} of these file(s))`);
+    }
+    lines.push(`  -- ${result.summary.reviewersFrom}`);
+  }
+  for (const limit of result.changes.limits) lines.push(`note: ${limit}`);
   return lines.join('\n');
 }
