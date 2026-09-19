@@ -3,6 +3,7 @@ import {
   buildProcesses, resolveProcess, query, detectChanges, review, planRename, applyRename,
   check, codeClusters, readOnlyCypher, readMeta,
   routeMap, shapeCheck, apiImpact, toolMap, taint, explain, pdg, httpCalls, contracts,
+  wikiPages, wikiDrift,
   type TargetQuery, type ImpactOptions, type ImpactResult, type ContextResult,
   type TraceResult, type TraceOptions, type Resolution, type CodeIndex, type SymbolRef,
   type ProcessIndex, type Process, type QueryResult,
@@ -10,7 +11,7 @@ import {
   type CheckResult, type CodeCluster,
   type RouteMap, type ShapeCheckResult, type ApiImpactResult, type ToolMap,
   type TaintResult, type ExplainResult, type PdgResult, type PdgFailure,
-  type ContractReport, type RepoSurface,
+  type ContractReport, type RepoSurface, type WikiPage, type WikiDrift,
 } from '@memory-layer/core';
 import { storeDirOrThrow, resolveProject, changedHunks, fileAuthors, isStale } from './project.js';
 import fs from 'node:fs';
@@ -973,5 +974,110 @@ export function formatContracts(result: GroupSurfaceResult): string {
     lines.push(`  ${member.name}  ${member.indexed ? (member.stale ? 'indexed, behind its working tree' : 'indexed') : 'no store'}  ${member.path}`);
   }
   for (const limit of result.limits) lines.push(`note: ${limit}`);
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// wiki
+
+export interface WikiResult {
+  status: 'ok';
+  directory: string;
+  pages: Array<{ path: string; title: string; bytes: number }>;
+  drift: WikiDrift[];
+  written: string[];
+  summary: { pages: number; missing: number; changed: number; extra: number; current: number; prose: string };
+}
+
+/**
+ * Documentation built from the graph, the memory and the source.
+ *
+ * `check` compares what is on disk with what this repository would generate
+ * and writes nothing. Without it, the pages are written.
+ *
+ * No language model is called, here or anywhere below. The roadmap for this
+ * milestone says a provider must be configured explicitly and never chosen by
+ * default; nothing in this build configures one, so what it produces is
+ * derived text only, and every page says so at the bottom.
+ */
+export async function runWiki(
+  options: { from?: string; out?: string; check?: boolean; includeTests?: boolean } = {},
+): Promise<WikiResult> {
+  const project = resolveProject(options.from);
+  const read = projectReader(options.from);
+  const directory = options.out
+    ? path.resolve(options.out)
+    : path.join(storeDirOrThrow(options.from), 'wiki');
+
+  return withIndex(options.from, async (store, index) => {
+    const processes = buildProcesses(index, { includeTests: options.includeTests });
+    const routes = routeMap(index, { read, includeTests: options.includeTests });
+    const pages = wikiPages({
+      project: project.name,
+      commit: project.lastCommit,
+      generatedAt: new Date().toISOString(),
+      index,
+      processes,
+      clusters: codeClusters(index, { includeTests: options.includeTests }),
+      routes,
+      checks: check(index, { includeTests: options.includeTests }),
+      taint: taint(index, { read, includeTests: options.includeTests }),
+      memories: await store.allNodes(),
+    });
+
+    const existing = new Map<string, string>();
+    if (fs.existsSync(directory)) {
+      for (const name of fs.readdirSync(directory)) {
+        if (!name.endsWith('.md')) continue;
+        try {
+          existing.set(name, fs.readFileSync(path.join(directory, name), 'utf8'));
+        } catch {
+          // Unreadable is not current: leaving it out makes it show as missing.
+        }
+      }
+    }
+    const drift = wikiDrift(pages, existing);
+
+    const written: string[] = [];
+    if (!options.check) {
+      fs.mkdirSync(directory, { recursive: true });
+      for (const page of pages) {
+        fs.writeFileSync(path.join(directory, page.path), page.body);
+        written.push(page.path);
+      }
+    }
+
+    const count = (state: WikiDrift['state']) => drift.filter((entry) => entry.state === state).length;
+    return {
+      status: 'ok' as const,
+      directory,
+      pages: pages.map((page) => ({ path: page.path, title: page.title, bytes: Buffer.byteLength(page.body) })),
+      drift,
+      written,
+      summary: {
+        pages: pages.length,
+        missing: count('missing'),
+        changed: count('changed'),
+        extra: count('extra'),
+        current: count('current'),
+        prose: 'derived from the repository; no language model was called, and none is configured by this build',
+      },
+    };
+  });
+}
+
+export function formatWiki(result: WikiResult): string {
+  const lines = [`${result.summary.pages} page(s) in ${result.directory}`, ''];
+  for (const entry of result.drift) {
+    const state = entry.state === 'current' ? 'unchanged'
+      : entry.state === 'missing' ? 'not written yet'
+        : entry.state === 'changed' ? 'differs from what this repository would generate'
+          : 'is in the directory and is not generated';
+    lines.push(`  ${entry.path}  -- ${state}`);
+  }
+  lines.push('', result.written.length > 0
+    ? `wrote ${result.written.length} page(s)`
+    : 'nothing was written (--check)');
+  lines.push(`prose: ${result.summary.prose}`);
   return lines.join('\n');
 }

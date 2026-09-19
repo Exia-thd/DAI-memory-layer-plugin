@@ -206,6 +206,8 @@ const USAGE = `dai-memory - project memory layer
       Repositories that make up one system.
   dai-memory contracts <group> [--json]
       Which repository answers which HTTP call, and which calls nothing answers.
+  dai-memory wiki [--out DIR] [--check] [--json]
+      Documentation built from the graph, the memory and the source. No model is called.
                           the shortest call path between two declarations
   dai-memory prune [--older-than 90] [--dry-run]  forget old, unreferenced episodic memories
   dai-memory ui [path] [--out FILE] [--max-nodes N]
@@ -669,6 +671,21 @@ reclaimed ${report.vanished} file(s) no longer on disk` : '') +
         includeTests: Boolean(args.flags['include-tests']),
       });
       emit(args, found, () => code.formatQuery(found));
+      return 0;
+    }
+
+    case 'wiki': {
+      const code = await import('./code.js');
+      const result = await code.runWiki({
+        out: stringFlag(args, 'out'),
+        check: Boolean(args.flags.check),
+        includeTests: Boolean(args.flags['include-tests']),
+      });
+      emit(args, result, () => code.formatWiki(result));
+      // --check is a question, and a drifted page is the answer "no".
+      if (args.flags.check) {
+        return result.summary.missing + result.summary.changed > 0 ? 1 : 0;
+      }
       return 0;
     }
 

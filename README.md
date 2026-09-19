@@ -142,6 +142,7 @@ A task-by-task guide is in [docs/usage.md](docs/usage.md).
 | `dai-memory shape-check` | What is wrong with those routes: duplicates, unbound path parameters, no handler |
 | `dai-memory api-impact <symbol>` | Which endpoints answer through a declaration |
 | `dai-memory tools` | The MCP tools this repository declares |
+| `dai-memory wiki [--out DIR] [--check]` | Documentation built from the graph, the memory and the source. No model is called; `--check` reports drift and writes nothing |
 | `dai-memory group list\|create\|add\|remove\|delete` | Repositories that make up one system |
 | `dai-memory contracts <group>` | Which repository answers which HTTP call, and which calls nothing answers |
 | `dai-memory taint [--depth N]` | Where untrusted input could reach something dangerous, through the call graph -- places worth reading, not a vulnerability report |

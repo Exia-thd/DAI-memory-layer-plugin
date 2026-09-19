@@ -302,6 +302,23 @@ const TOOLS = [
     },
   },
   {
+    name: 'dai_memory_wiki',
+    description:
+      'Documentation built from the code graph, the recorded memory and the source text: an overview, '
+      + 'the execution flows, the HTTP surface, the areas of the code, the recorded decisions copied '
+      + 'verbatim, and what the checks say. No language model is called and none is configured, so '
+      + 'every sentence is derived; each page says so. With check, it compares what is on disk with '
+      + 'what would be generated and writes nothing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        out: { type: 'string', description: 'Where to write. Default: the store\'s wiki directory.' },
+        check: { type: 'boolean', description: 'Report drift and write nothing.' },
+        includeTests: { type: 'boolean' },
+      },
+    },
+  },
+  {
     name: 'dai_memory_groups',
     description:
       'The groups of repositories defined on this machine, each a list of projects that make up one '
@@ -779,6 +796,11 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<un
         args.to,
         { apply: args.apply === true, includeText: args.includeText === true, includeTests: args.includeTests === true },
       );
+    }
+
+    case 'dai_memory_wiki': {
+      const { runWiki } = await import('./code.js');
+      return runWiki({ out: optionalString(args.out), check: args.check === true, includeTests: args.includeTests === true });
     }
 
     case 'dai_memory_groups': {

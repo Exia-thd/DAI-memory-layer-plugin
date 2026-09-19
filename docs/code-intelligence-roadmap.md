@@ -30,8 +30,8 @@ change-impact on every commit, and seven of its skills call `impact` and
 | M6 | API surface | route extraction across the common web frameworks; `route_map`, `shape_check`, `api_impact`, `tool_map` | **done** -- CLI `routes`, `shape-check`, `api-impact`, `tools`; MCP tools and a routes resource. Patterns for express-style, FastAPI, Flask, Django, decorators (NestJS/Spring), ASP.NET, Go and Rails |
 | M7 | Program dependence and taint | per-function control flow, control dependence and reaching definitions; taint sources, sinks and sanitizers with function-level cross-function paths; `explain`, `pdg_query` | **done** -- CLI `taint`, `explain`, `pdg`; MCP tools and a taint resource. Taint is pattern matching joined by the call graph, not value tracking, and every answer says so |
 | M8 | Multi-repository groups | group configuration, a registry of HTTP contracts between repositories, `group_list`, `group_sync`, `trace` across a group | **done** -- CLI `group` and `contracts`, MCP `dai_memory_groups` and `dai_memory_contracts`. Contracts are matched on method and path; bodies are not checked, and the answer says so |
-| M9 | Wiki | documentation generated from the graph and the memory, through an explicitly configured model provider — never one chosen by default | next |
-| M10 | Harness switch-over | the gate, MCP configuration, skills, installers and docs move to this layer; GitNexus is removed; the harness's older memory stores are retired | planned |
+| M9 | Wiki | documentation generated from the graph and the memory, through an explicitly configured model provider — never one chosen by default | **done** -- CLI `wiki` (`--check` reports drift and writes nothing), MCP `dai_memory_wiki`. Derived text only: no provider is configured by this build, so no model is called and every page says so |
+| M10 | Harness switch-over | the gate, MCP configuration, skills, installers and docs move to this layer; GitNexus is removed; the harness's older memory stores are retired | next |
 
 ## Rules every milestone keeps
 

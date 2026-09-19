@@ -60,6 +60,9 @@ export {
   query, type QueryResult, type QueryGroup, type QueryHit, type QueryOptions,
 } from './graph/query.js';
 export {
+  wikiPages, wikiDrift, type WikiPage, type WikiInput, type WikiDrift,
+} from './graph/wiki.js';
+export {
   httpCalls, contracts, normalisePath, pathOf,
   type HttpCall, type HttpCallOptions, type RepoSurface, type Contract, type ContractReport,
 } from './graph/group.js';
