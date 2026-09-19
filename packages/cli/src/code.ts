@@ -2,13 +2,14 @@ import {
   MemoryStore, loadCodeIndex, resolveTarget, impact, symbolContext, trace,
   buildProcesses, resolveProcess, query, detectChanges, review, planRename, applyRename,
   check, codeClusters, readOnlyCypher, readMeta,
-  routeMap, shapeCheck, apiImpact, toolMap,
+  routeMap, shapeCheck, apiImpact, toolMap, taint, explain, pdg,
   type TargetQuery, type ImpactOptions, type ImpactResult, type ContextResult,
   type TraceResult, type TraceOptions, type Resolution, type CodeIndex, type SymbolRef,
   type ProcessIndex, type Process, type QueryResult,
   type DetectChangesResult, type ReviewResult, type RenamePlan, type RenameRefusal,
   type CheckResult, type CodeCluster,
   type RouteMap, type ShapeCheckResult, type ApiImpactResult, type ToolMap,
+  type TaintResult, type ExplainResult, type PdgResult, type PdgFailure,
 } from '@memory-layer/core';
 import { storeDirOrThrow, resolveProject, changedHunks, fileAuthors, isStale } from './project.js';
 import fs from 'node:fs';
@@ -771,5 +772,105 @@ export function formatToolMap(result: ToolMap): string {
     if (tool.description) lines.push(`      ${tool.description}`);
   }
   lines.push('', `looked for: ${result.summary.stylesLookedFor.join('; ')}`);
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// taint, explain, pdg
+
+export async function runTaint(
+  options: { from?: string; includeTests?: boolean; maxDepth?: number } = {},
+): Promise<TaintResult> {
+  const read = projectReader(options.from);
+  return withIndex(options.from, async (_store, index) =>
+    taint(index, { read, includeTests: options.includeTests, maxDepth: options.maxDepth }));
+}
+
+export async function runExplain(
+  target: TargetQuery & { path?: string },
+  options: { from?: string; includeTests?: boolean; maxDepth?: number } = {},
+): Promise<ExplainResult | Unresolved> {
+  const read = projectReader(options.from);
+  return withIndex(options.from, async (_store, index) => {
+    const found = taint(index, { read, includeTests: options.includeTests, maxDepth: options.maxDepth });
+    if (target.path) return explain(index, found, { file: target.path });
+    const resolution = resolveTarget(index, target);
+    const refused = unresolved('target', target, resolution);
+    if (refused) return refused;
+    return explain(index, found, { symbolId: (resolution as { id: string }).id });
+  });
+}
+
+export async function runPdg(
+  target: TargetQuery,
+  options: { from?: string } = {},
+): Promise<PdgResult | PdgFailure | Unresolved> {
+  const read = projectReader(options.from);
+  return withIndex(options.from, async (_store, index) => {
+    const resolution = resolveTarget(index, target);
+    const refused = unresolved('target', target, resolution);
+    if (refused) return refused;
+    const symbol = index.symbols.get((resolution as { id: string }).id)!;
+    const content = read(symbol.filePath);
+    if (content === undefined) {
+      return {
+        status: 'unsupported' as const,
+        file: symbol.filePath,
+        reason: 'the file could not be read from the working tree.',
+      };
+    }
+    return pdg(symbol.filePath, content, { startLine: symbol.startLine, endLine: symbol.endLine });
+  });
+}
+
+export function formatTaint(result: TaintResult): string {
+  const lines = [`${result.summary.findings} place(s) where untrusted input could reach something dangerous`, ''];
+  for (const finding of result.findings) {
+    lines.push(`[${percent(finding.confidence)}${finding.sanitizers.length > 0 ? ', mitigated' : ''}] ${finding.source.hit.marker} -> ${finding.sink.hit.marker}`);
+    lines.push(`    from  ${finding.source.symbol.qualified}  ${finding.source.symbol.filePath}:${finding.source.hit.line}`);
+    lines.push(`          ${finding.source.hit.text}`);
+    for (const hop of finding.path) lines.push(`    via   ${hop.qualified}  ${hop.filePath}:${hop.startLine}`);
+    lines.push(`    to    ${finding.sink.symbol.qualified}  ${finding.sink.symbol.filePath}:${finding.sink.hit.line}`);
+    lines.push(`          ${finding.sink.hit.text}`);
+    for (const sanitizer of finding.sanitizers) {
+      lines.push(`    but   ${sanitizer.hit.kind} at ${sanitizer.symbol.filePath}:${sanitizer.hit.line}`);
+    }
+    lines.push('');
+  }
+  lines.push(
+    `scanned ${result.summary.declarationsScanned} declaration(s): ${result.summary.withSources} read untrusted input, ${result.summary.withSinks} reach something dangerous`,
+  );
+  for (const limit of result.limits) lines.push(`note: ${limit}`);
+  return lines.join('\n');
+}
+
+export function formatExplain(result: ExplainResult): string {
+  const name = 'qualified' in result.target ? result.target.qualified : result.target.file;
+  const lines = [`${name}: ${result.summary.note}`, ''];
+  for (const finding of result.findings) {
+    lines.push(`[${percent(finding.confidence)}] ${finding.source.symbol.qualified}:${finding.source.hit.line} (${finding.source.hit.kind})`
+      + ` -> ${finding.sink.symbol.qualified}:${finding.sink.hit.line} (${finding.sink.hit.kind})`);
+    lines.push(`    ${finding.why}`);
+  }
+  if (result.findings.length > 0) {
+    lines.push('', `as the source of ${result.summary.asSource}, the sink of ${result.summary.asSink}, on the path of ${result.summary.onPath}`);
+  }
+  return lines.join('\n');
+}
+
+export function formatPdg(result: PdgResult | PdgFailure): string {
+  if (result.status !== 'ok') return `cannot read the inside of this declaration: ${result.reason}`;
+  const lines = [`${result.file}:${result.startLine}-${result.endLine}  (${result.language})`, '', 'names:'];
+  for (const name of result.names) {
+    lines.push(`  ${name.name}  defined at ${name.definedAt.join(', ') || '(not here)'}`
+      + `  used at ${name.usedAt.join(', ') || '(not here)'}${name.underControl ? '  -- read under a condition' : ''}`);
+  }
+  if (result.control.length > 0) {
+    lines.push('', 'runs only sometimes:');
+    for (const region of result.control) {
+      lines.push(`  ${region.kind}  lines ${region.line}-${region.endLine}${region.condition ? `  when ${region.condition}` : ''}`);
+    }
+  }
+  for (const limit of result.limits) lines.push(`note: ${limit}`);
   return lines.join('\n');
 }

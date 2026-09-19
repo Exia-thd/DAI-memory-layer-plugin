@@ -60,6 +60,14 @@ export {
   query, type QueryResult, type QueryGroup, type QueryHit, type QueryOptions,
 } from './graph/query.js';
 export {
+  taint, explain, SOURCES, SINKS, SANITIZERS,
+  type TaintResult, type TaintFinding, type TaintOptions, type ExplainResult,
+  type DeclarationMarkers, type MarkerHit, type Marker,
+} from './graph/taint.js';
+export {
+  pdg, type PdgResult, type PdgFailure, type Definition, type Use, type ControlRegion,
+} from './graph/pdg.js';
+export {
   routeMap, shapeCheck, apiImpact, toolMap, FRAMEWORKS,
   type Route, type RouteMap, type RouteOptions, type ShapeCheckResult, type RouteProblem,
   type ApiImpactResult, type ToolMap, type ToolDefinition,

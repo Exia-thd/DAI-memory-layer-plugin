@@ -302,6 +302,50 @@ const TOOLS = [
     },
   },
   {
+    name: 'dai_memory_taint',
+    description:
+      'Where untrusted input could reach something dangerous: sources (request data, argv, the '
+      + 'environment, stdin) joined to sinks (a shell, eval, SQL, HTML, the filesystem) through the '
+      + 'call graph. This matches patterns and follows calls; it does not track values, so a finding '
+      + 'is a place worth reading, not a vulnerability. A sanitizer on the path halves the confidence '
+      + 'and marks the finding mitigated rather than hiding it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        maxDepth: { type: 'number', description: '0-6 calls from source to sink, default 3.' },
+        includeTests: { type: 'boolean' },
+      },
+    },
+  },
+  {
+    name: 'dai_memory_explain',
+    description:
+      'What the taint analysis says about one declaration or file: the findings it is the source of, '
+      + 'the sink of, or on the path of. Nothing found is reported as nothing found, which is not the '
+      + 'same as safe.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'A declaration name.' },
+        path: { type: 'string', description: 'A file path instead of a name.' },
+        uid: { type: 'string' },
+        file: { type: 'string' },
+        maxDepth: { type: 'number' },
+      },
+    },
+  },
+  {
+    name: 'dai_memory_pdg',
+    description:
+      'The inside of one declaration, from its syntax tree: every name, the lines that give it a '
+      + 'value, the lines that read it, and which lines run only under a condition. No aliasing, no '
+      + 'fields, nothing across a call -- and the answer says so.',
+    inputSchema: {
+      type: 'object',
+      properties: { target: { type: 'string' }, uid: { type: 'string' }, file: { type: 'string' } },
+    },
+  },
+  {
     name: 'dai_memory_routes',
     description:
       'The HTTP routes this repository declares and the declaration each sits in, read per framework '
@@ -716,6 +760,35 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<un
       );
     }
 
+    case 'dai_memory_taint': {
+      const { runTaint } = await import('./code.js');
+      return runTaint({ maxDepth: numeric(args.maxDepth), includeTests: args.includeTests === true });
+    }
+
+    case 'dai_memory_explain': {
+      const { runExplain } = await import('./code.js');
+      const path = optionalString(args.path);
+      if (!path && !optionalString(args.target) && !optionalString(args.uid)) {
+        throw new Error('dai_memory_explain needs a target name, uid or path.');
+      }
+      return runExplain(
+        { name: optionalString(args.target), uid: optionalString(args.uid), file: optionalString(args.file), path },
+        { maxDepth: numeric(args.maxDepth) },
+      );
+    }
+
+    case 'dai_memory_pdg': {
+      const { runPdg } = await import('./code.js');
+      if (!optionalString(args.target) && !optionalString(args.uid)) {
+        throw new Error('dai_memory_pdg needs a target name or uid.');
+      }
+      return runPdg({
+        name: optionalString(args.target),
+        uid: optionalString(args.uid),
+        file: optionalString(args.file),
+      });
+    }
+
     case 'dai_memory_routes': {
       const { runRouteMap } = await import('./code.js');
       return runRouteMap({ includeTests: args.includeTests === true });
@@ -850,6 +923,7 @@ async function listResources(): Promise<Array<{ uri: string; name: string; descr
     resource('processes', `${project}: execution flows`, 'Every execution flow: an entry point and what it reaches, with the rule that found the entry points.'),
     resource('clusters', `${project}: code clusters`, 'Communities in the call graph, named after the directory most of each lives in.'),
     resource('memory-clusters', `${project}: memory clusters`, 'Communities in the memory graph, with any summary somebody recorded for them.'),
+    resource('taint', `${project}: untrusted input`, 'Where untrusted input could reach something dangerous, with what the analysis does not claim.'),
     resource('routes', `${project}: HTTP surface`, 'Every route this repository declares, the declaration each sits in, and which frameworks were looked for.'),
     resource('check', `${project}: invariants`, 'Import cycles and the other invariants, with what each rule examined.'),
     resource('schema', `${project}: graph schema`, 'The node and relationship types in the store, for writing a Cypher query against it.'),
@@ -915,6 +989,7 @@ async function readResource(uri: string): Promise<unknown> {
   if (path === 'processes') return code.runProcesses({ limit: 200 });
   if (path === 'clusters') return code.runCodeClusters({ limit: 50 });
   if (path === 'memory-clusters') return { clusters: await api.runClusters() };
+  if (path === 'taint') return code.runTaint();
   if (path === 'routes') return code.runRouteMap();
   if (path === 'check') return code.runCheck();
   if (path === 'schema') return graphSchema();

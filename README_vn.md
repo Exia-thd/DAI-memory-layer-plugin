@@ -138,6 +138,9 @@ Hướng dẫn theo từng việc, kể cả nên tự động hoá cái gì và
 | `dai-memory shape-check` | Route có vấn đề gì: trùng đường dẫn, tham số không ai dùng, không có handler |
 | `dai-memory api-impact <symbol>` | Những endpoint nào trả lời thông qua khai báo này |
 | `dai-memory tools` | Các MCP tool repo này khai báo |
+| `dai-memory taint [--depth N]` | Đầu vào không tin cậy có thể chạm tới chỗ nguy hiểm nào, lần theo đồ thị lời gọi — là chỗ đáng đọc, không phải báo cáo lỗ hổng |
+| `dai-memory explain <symbol\|file>` | Phân tích đó nói gì về một khai báo hoặc một file |
+| `dai-memory pdg <symbol>` | Bên trong một khai báo: từng tên, được gán ở đâu, đọc ở đâu, dòng nào chỉ chạy khi có điều kiện |
 | `dai-memory check [--fail-on S]` | Các bất biến của code graph — import vòng và những thứ khác — kèm phần mỗi quy tắc đã xem xét |
 | `dai-memory code-clusters [--min-size N]` | Cụm trong đồ thị lời gọi, đặt tên theo thư mục chứa phần lớn cụm đó |
 | `dai-memory cypher <query>` | Một truy vấn chỉ đọc vào kho. Mệnh đề ghi bị từ chối, truy vấn thiếu LIMIT thì được thêm |

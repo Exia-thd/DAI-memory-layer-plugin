@@ -196,6 +196,12 @@ const USAGE = `dai-memory - project memory layer
       Which endpoints answer through a declaration.
   dai-memory tools [--json]
       The MCP tools this repository declares.
+  dai-memory taint [--depth N] [--json]
+      Where untrusted input could reach something dangerous, through the call graph.
+  dai-memory explain <symbol|file> [--json]
+      What that says about one declaration or file.
+  dai-memory pdg <symbol> [--json]
+      Inside one declaration: names, where each is set and read, what is conditional.
                           the shortest call path between two declarations
   dai-memory prune [--older-than 90] [--dry-run]  forget old, unreferenced episodic memories
   dai-memory ui [path] [--out FILE] [--max-nodes N]
@@ -660,6 +666,50 @@ reclaimed ${report.vanished} file(s) no longer on disk` : '') +
       });
       emit(args, found, () => code.formatQuery(found));
       return 0;
+    }
+
+    case 'taint': {
+      const code = await import('./code.js');
+      const result = await code.runTaint({
+        maxDepth: numberFlag(args, 'depth'),
+        includeTests: Boolean(args.flags['include-tests']),
+      });
+      emit(args, result, () => code.formatTaint(result));
+      return 0;
+    }
+
+    case 'explain': {
+      if (!args.positional[0]) throw new Error('explain needs a symbol name or a file path');
+      const code = await import('./code.js');
+      const asked = args.positional[0]!;
+      // A path has a separator or an extension; anything else is a name.
+      const looksLikePath = asked.includes('/') || /\.[A-Za-z0-9]+$/.test(asked);
+      const result = await code.runExplain(
+        looksLikePath
+          ? { path: asked }
+          : { name: asked, file: stringFlag(args, 'file'), uid: stringFlag(args, 'uid') },
+        { maxDepth: numberFlag(args, 'depth'), includeTests: Boolean(args.flags['include-tests']) },
+      );
+      if (result.status === 'ok') {
+        emit(args, result, () => code.formatExplain(result as never));
+        return 0;
+      }
+      emit(args, result, () => code.formatUnresolved(result as never));
+      return 1;
+    }
+
+    case 'pdg': {
+      if (!args.positional[0] && !stringFlag(args, 'uid')) throw new Error('pdg needs a symbol name or --uid');
+      const code = await import('./code.js');
+      const result = await code.runPdg({
+        name: args.positional[0], uid: stringFlag(args, 'uid'), file: stringFlag(args, 'file'),
+      });
+      if (result.status === 'ok' || result.status === 'unsupported') {
+        emit(args, result, () => code.formatPdg(result as never));
+        return result.status === 'ok' ? 0 : 1;
+      }
+      emit(args, result, () => code.formatUnresolved(result as never));
+      return 1;
     }
 
     case 'routes': {
