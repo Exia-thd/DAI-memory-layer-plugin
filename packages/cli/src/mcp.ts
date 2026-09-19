@@ -279,6 +279,28 @@ const TOOLS = [
     },
   },
   {
+    name: 'dai_memory_rename',
+    description:
+      'Rename a declaration through the call graph: the declaration, the calls resolved to it, and '
+      + 'the types deriving from it, each with the confidence of the edge that found it. Other '
+      + 'occurrences of the word -- comments, strings, a different declaration with the same name -- '
+      + 'are reported separately and never rewritten unless asked. Shows a plan; apply must be asked '
+      + 'for. Refuses when the graph is older than the working tree, and when the name is ambiguous.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string' },
+        uid: { type: 'string' },
+        file: { type: 'string' },
+        to: { type: 'string' },
+        apply: { type: 'boolean', description: 'Write the edits. Default false.' },
+        includeText: { type: 'boolean', description: 'Also rewrite occurrences the graph cannot vouch for.' },
+        includeTests: { type: 'boolean' },
+      },
+      required: ['to'],
+    },
+  },
+  {
     name: 'dai_memory_clusters',
     description:
       'Groups of related memories, with the summary somebody wrote for each group ' +
@@ -578,6 +600,19 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<un
         maxDepth: numeric(args.maxDepth),
         includeTests: args.includeTests === true,
       });
+    }
+
+    case 'dai_memory_rename': {
+      const { runRename } = await import('./code.js');
+      if (typeof args.to !== 'string' || !args.to.trim()) throw new Error('dai_memory_rename needs the new name in `to`.');
+      if (!optionalString(args.target) && !optionalString(args.uid)) {
+        throw new Error('dai_memory_rename needs a target name or uid.');
+      }
+      return runRename(
+        { name: optionalString(args.target), uid: optionalString(args.uid), file: optionalString(args.file) },
+        args.to,
+        { apply: args.apply === true, includeText: args.includeText === true, includeTests: args.includeTests === true },
+      );
     }
 
     case 'dai_memory_clusters':

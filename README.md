@@ -137,6 +137,7 @@ A task-by-task guide is in [docs/usage.md](docs/usage.md).
 | `dai-memory process <name>` | One flow, step by step, with each step's distance from the entry |
 | `dai-memory detect-changes [--scope S] [--base REF]` | What a diff changes in declarations: dependents, flows, risk, and what it could not see |
 | `dai-memory review [--base REF]` | A branch as a reviewer wants it: what can break other files, which modules, who has worked there |
+| `dai-memory rename <symbol> <new name> [--apply]` | Rename through the call graph. Other occurrences of the word are reported, not rewritten; nothing is written without `--apply` |
 | `dai-memory clusters` | Communities in the memory graph, with any stored summary |
 | `dai-memory summarize <id> --body S` | Record a summary for a group, linked to its members |
 | `dai-memory session start\|end` | Open or close a session, so writes record when they happened |

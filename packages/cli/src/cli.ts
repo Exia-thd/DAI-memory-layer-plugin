@@ -176,6 +176,8 @@ const USAGE = `dai-memory - project memory layer
       What a diff changes in declarations: dependents, flows and risk.
   dai-memory review [--base REF] [--depth 1-3] [--json]
       A branch as a reviewer wants it: what can break, where, and who has worked there.
+  dai-memory rename <symbol> <new name> [--file F] [--uid ID] [--apply] [--include-text] [--json]
+      Rename through the call graph. Shows the plan; --apply writes it.
                           the shortest call path between two declarations
   dai-memory prune [--older-than 90] [--dry-run]  forget old, unreferenced episodic memories
   dai-memory ui [path] [--out FILE] [--max-nodes N]
@@ -640,6 +642,28 @@ reclaimed ${report.vanished} file(s) no longer on disk` : '') +
       });
       emit(args, found, () => code.formatQuery(found));
       return 0;
+    }
+
+    case 'rename': {
+      if (args.positional.length < 2 && !(stringFlag(args, 'uid') && args.positional[0])) {
+        throw new Error('rename needs <symbol> <new name> (or --uid ID <new name>)');
+      }
+      const code = await import('./code.js');
+      const [first, second] = args.positional;
+      const uid = stringFlag(args, 'uid');
+      const to = (uid ? first : second)!;
+      const result = await code.runRename(
+        { name: uid ? undefined : first, uid, file: stringFlag(args, 'file') },
+        to,
+        {
+          apply: Boolean(args.flags.apply),
+          includeTests: Boolean(args.flags['include-tests']),
+          includeText: Boolean(args.flags['include-text']),
+        },
+      );
+      emit(args, result, () => code.formatRename(result));
+      // A refusal is not a rename. Only a plan or an applied rename exits zero.
+      return result.status === 'ok' ? 0 : 1;
     }
 
     case 'detect-changes': {

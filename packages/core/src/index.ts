@@ -60,6 +60,10 @@ export {
   query, type QueryResult, type QueryGroup, type QueryHit, type QueryOptions,
 } from './graph/query.js';
 export {
+  planRename, applyRename,
+  type RenamePlan, type RenameRefusal, type RenameEdit, type TextMatch, type RenameOptions, type AppliedRename,
+} from './graph/rename.js';
+export {
   detectChanges, review, moduleOf,
   type Hunk, type DetectChangesResult, type DetectChangesOptions, type ChangedSymbol,
   type ChangedFile, type ReviewResult, type ReviewOptions,

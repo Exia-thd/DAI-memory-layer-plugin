@@ -1,12 +1,14 @@
 import {
   MemoryStore, loadCodeIndex, resolveTarget, impact, symbolContext, trace,
-  buildProcesses, resolveProcess, query, detectChanges, review,
+  buildProcesses, resolveProcess, query, detectChanges, review, planRename, applyRename,
   type TargetQuery, type ImpactOptions, type ImpactResult, type ContextResult,
   type TraceResult, type TraceOptions, type Resolution, type CodeIndex, type SymbolRef,
   type ProcessIndex, type Process, type QueryResult,
-  type DetectChangesResult, type ReviewResult,
+  type DetectChangesResult, type ReviewResult, type RenamePlan, type RenameRefusal,
 } from '@memory-layer/core';
 import { storeDirOrThrow, resolveProject, changedHunks, fileAuthors, isStale } from './project.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 /**
  * Impact, context and trace, for the CLI and the MCP server alike.
@@ -416,5 +418,121 @@ export function formatReview(result: ReviewResult): string {
     lines.push(`  -- ${result.summary.reviewersFrom}`);
   }
   for (const limit of result.changes.limits) lines.push(`note: ${limit}`);
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// rename
+
+export type RenameResult =
+  | (RenamePlan & { applied: null | { files: string[]; edits: number; skipped: number } })
+  | RenameRefusal
+  | Unresolved
+  | { status: 'stale'; indexed: string | null; head: string | null; reason: string };
+
+/**
+ * A rename, planned from the graph and applied only when asked.
+ *
+ * Refused outright when the index is older than the working tree: the plan is
+ * positions in files, and positions from a tree that has moved on are how a
+ * rename corrupts source instead of changing it.
+ */
+export async function runRename(
+  target: TargetQuery,
+  to: string,
+  options: { from?: string; apply?: boolean; includeTests?: boolean; includeText?: boolean } = {},
+): Promise<RenameResult> {
+  const project = resolveProject(options.from);
+  const staleness = isStale(storeDirOrThrow(options.from));
+  if (staleness.stale) {
+    return {
+      status: 'stale',
+      indexed: staleness.indexed,
+      head: staleness.head,
+      reason: 'the code graph is older than the working tree, and a rename is positions in files. Run `dai-memory ingest` first.',
+    };
+  }
+
+  const absolute = (file: string) => path.join(project.root, file);
+  const read = (file: string): string | undefined => {
+    try {
+      return fs.readFileSync(absolute(file), 'utf8');
+    } catch {
+      return undefined;
+    }
+  };
+
+  return withIndex(options.from, async (_store, index) => {
+    const resolution = resolveTarget(index, target);
+    const refused = unresolved('target', target, resolution);
+    if (refused) return refused;
+
+    const files = new Set<string>();
+    for (const symbol of index.symbols.values()) files.add(symbol.filePath);
+    const plan = planRename(index, (resolution as { id: string }).id, to, {
+      read,
+      includeTests: options.includeTests,
+      scanText: files,
+    });
+    if (plan.status !== 'ok') return plan;
+    if (!options.apply) return { ...plan, applied: null };
+
+    const chosen = options.includeText
+      ? [...plan.edits, ...plan.textOnly.map((match) => ({
+        file: match.file, line: match.line, column: match.column, before: plan.from,
+        via: 'call' as const, confidence: 0,
+      }))]
+      : plan.edits;
+    const { files: written, skipped } = applyRename(plan, read, chosen);
+    for (const file of written) fs.writeFileSync(absolute(file.file), file.text);
+    return {
+      ...plan,
+      applied: {
+        files: written.map((file) => file.file),
+        edits: written.reduce((sum, file) => sum + file.edits, 0),
+        skipped: skipped.length,
+      },
+    };
+  });
+}
+
+export function formatRename(result: RenameResult): string {
+  if (result.status === 'stale') {
+    return [
+      `refusing to rename: ${result.reason}`,
+      `the graph was built at ${result.indexed ?? 'an unknown commit'}, HEAD is ${result.head ?? 'unknown'}`,
+    ].join('\n');
+  }
+  if (result.status === 'invalid_name') return `cannot rename to ${JSON.stringify(result.to)}: ${result.reason}`;
+  if (result.status === 'occupied') {
+    return [
+      `${JSON.stringify(result.to)} is already declared in this file:`,
+      ...result.conflicts.map((ref) => `  ${ref.qualified}  ${ref.filePath}:${ref.startLine}`),
+    ].join('\n');
+  }
+  if (result.status !== 'ok') return formatUnresolved(result as Unresolved);
+
+  const lines = [
+    `${result.applied ? 'renamed' : 'would rename'} ${result.from} -> ${result.to}: `
+    + `${result.summary.edits} site(s) in ${result.summary.files} file(s)`,
+    '',
+  ];
+  for (const edit of result.edits) {
+    lines.push(`  ${edit.file}:${edit.line}:${edit.column}  [${edit.via}, ${percent(edit.confidence)}]`);
+  }
+  if (result.textOnly.length > 0) {
+    lines.push('', `the word also appears here, and is not part of this rename (${result.textOnly.length}):`);
+    for (const match of result.textOnly.slice(0, 20)) {
+      lines.push(`  ${match.file}:${match.line}  ${match.context}   -- ${match.reason}`);
+    }
+    if (result.textOnly.length > 20) lines.push(`  ... and ${result.textOnly.length - 20} more`);
+  }
+  if (result.applied) {
+    lines.push('', `wrote ${result.applied.edits} edit(s) to ${result.applied.files.length} file(s)`);
+    if (result.applied.skipped > 0) lines.push(`${result.applied.skipped} site(s) skipped: the file did not hold what the plan expected`);
+  } else {
+    lines.push('', 'nothing was written. Pass --apply to make these edits.');
+  }
+  for (const limit of result.limits) lines.push(`note: ${limit}`);
   return lines.join('\n');
 }
