@@ -2,7 +2,7 @@ import {
   MemoryStore, loadCodeIndex, resolveTarget, impact, symbolContext, trace,
   buildProcesses, resolveProcess, query, detectChanges, review, planRename, applyRename,
   check, codeClusters, readOnlyCypher, readMeta,
-  routeMap, shapeCheck, apiImpact, toolMap, taint, explain, pdg,
+  routeMap, shapeCheck, apiImpact, toolMap, taint, explain, pdg, httpCalls, contracts,
   type TargetQuery, type ImpactOptions, type ImpactResult, type ContextResult,
   type TraceResult, type TraceOptions, type Resolution, type CodeIndex, type SymbolRef,
   type ProcessIndex, type Process, type QueryResult,
@@ -10,6 +10,7 @@ import {
   type CheckResult, type CodeCluster,
   type RouteMap, type ShapeCheckResult, type ApiImpactResult, type ToolMap,
   type TaintResult, type ExplainResult, type PdgResult, type PdgFailure,
+  type ContractReport, type RepoSurface,
 } from '@memory-layer/core';
 import { storeDirOrThrow, resolveProject, changedHunks, fileAuthors, isStale } from './project.js';
 import fs from 'node:fs';
@@ -870,6 +871,106 @@ export function formatPdg(result: PdgResult | PdgFailure): string {
     for (const region of result.control) {
       lines.push(`  ${region.kind}  lines ${region.line}-${region.endLine}${region.condition ? `  when ${region.condition}` : ''}`);
     }
+  }
+  for (const limit of result.limits) lines.push(`note: ${limit}`);
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// groups of repositories
+
+export type GroupSurfaceResult =
+  | (ContractReport & { group: string; members: Array<{ name: string; path: string; indexed: boolean; stale: boolean }> })
+  | { status: 'no_such_group'; name: string; known: string[] }
+  | { status: 'no_members'; name: string };
+
+/**
+ * The contracts inside a group, computed from each member's own store.
+ *
+ * A member with no store is reported rather than skipped: a group answer that
+ * silently leaves out half the system is worse than one that says which half
+ * it could not read.
+ */
+export async function runContracts(name: string, options: { includeTests?: boolean } = {}): Promise<GroupSurfaceResult> {
+  const { findGroup, readGroups } = await import('./groups.js');
+  const group = findGroup(name);
+  if (!group) return { status: 'no_such_group', name, known: readGroups().map((entry) => entry.name) };
+  if (group.members.length === 0) return { status: 'no_members', name };
+
+  const surfaces: RepoSurface[] = [];
+  const members: Array<{ name: string; path: string; indexed: boolean; stale: boolean }> = [];
+
+  for (const member of group.members) {
+    const label = path.basename(member);
+    let indexed = false;
+    let stale = false;
+    try {
+      const dir = storeDirOrThrow(member);
+      indexed = true;
+      stale = isStale(dir).stale;
+      const store = new MemoryStore(dir, { readOnly: true });
+      try {
+        if (store.graphReady) {
+          const index = await loadCodeIndex(store);
+          const read = (file: string): string | undefined => {
+            try {
+              return fs.readFileSync(path.join(member, file), 'utf8');
+            } catch {
+              return undefined;
+            }
+          };
+          surfaces.push({
+            repo: label,
+            routes: routeMap(index, { read, includeTests: options.includeTests }).routes,
+            calls: httpCalls(index, { read, includeTests: options.includeTests }),
+          });
+        }
+      } finally {
+        await store.close();
+      }
+    } catch {
+      indexed = false;
+    }
+    members.push({ name: label, path: member, indexed, stale });
+  }
+
+  const report = contracts(surfaces);
+  if (members.some((member) => !member.indexed)) {
+    report.limits.unshift(
+      `${members.filter((member) => !member.indexed).length} member(s) of this group have no store and were not read: `
+      + `${members.filter((member) => !member.indexed).map((member) => member.name).join(', ')}. Run \`dai-memory init\` in each.`,
+    );
+  }
+  if (members.some((member) => member.stale)) {
+    report.limits.unshift(
+      `${members.filter((member) => member.stale).length} member(s) were indexed at an older commit than their working tree.`,
+    );
+  }
+  return { ...report, group: name, members };
+}
+
+export function formatContracts(result: GroupSurfaceResult): string {
+  if (result.status === 'no_such_group') {
+    return [`no group named ${JSON.stringify(result.name)}`,
+      result.known.length > 0 ? `known groups: ${result.known.join(', ')}` : 'no groups are defined yet'].join('\n');
+  }
+  if (result.status === 'no_members') return `the group ${JSON.stringify(result.name)} has no members`;
+
+  const lines = [`${result.group}: ${result.summary.contracts} contract(s) between ${result.summary.repos.length} repositor(ies)`, ''];
+  for (const contract of result.contracts) {
+    lines.push(`  ${contract.consumer.repo} -> ${contract.provider.repo}  ${contract.provider.method} ${contract.provider.path}  [${percent(contract.confidence)}]`);
+    lines.push(`      calls at  ${contract.consumer.file}:${contract.consumer.line}${contract.consumer.caller ? `  in ${contract.consumer.caller}` : ''}`);
+    lines.push(`      answered  ${contract.provider.file}:${contract.provider.line}${contract.provider.handler ? `  by ${contract.provider.handler}` : ''}`);
+  }
+  if (result.unmatched.length > 0) {
+    lines.push('', `calls nothing in this group answers (${result.unmatched.length}):`);
+    for (const call of result.unmatched.slice(0, 10)) {
+      lines.push(`  ${call.repo}  ${call.method} ${call.path ?? '(runtime)'}  ${call.file}:${call.line}  -- ${call.reason}`);
+    }
+  }
+  lines.push('', 'members:');
+  for (const member of result.members) {
+    lines.push(`  ${member.name}  ${member.indexed ? (member.stale ? 'indexed, behind its working tree' : 'indexed') : 'no store'}  ${member.path}`);
   }
   for (const limit of result.limits) lines.push(`note: ${limit}`);
   return lines.join('\n');

@@ -202,6 +202,10 @@ const USAGE = `dai-memory - project memory layer
       What that says about one declaration or file.
   dai-memory pdg <symbol> [--json]
       Inside one declaration: names, where each is set and read, what is conditional.
+  dai-memory group list|create|add|remove|delete <name> [paths...]
+      Repositories that make up one system.
+  dai-memory contracts <group> [--json]
+      Which repository answers which HTTP call, and which calls nothing answers.
                           the shortest call path between two declarations
   dai-memory prune [--older-than 90] [--dry-run]  forget old, unreferenced episodic memories
   dai-memory ui [path] [--out FILE] [--max-nodes N]
@@ -666,6 +670,58 @@ reclaimed ${report.vanished} file(s) no longer on disk` : '') +
       });
       emit(args, found, () => code.formatQuery(found));
       return 0;
+    }
+
+    case 'group': {
+      const groups = await import('./groups.js');
+      const action = args.positional[0] ?? 'list';
+      const name = args.positional[1];
+
+      if (action === 'list') {
+        const all = groups.readGroups();
+        emit(args, { groups: all }, () => all.length === 0
+          ? 'no groups yet -- `dai-memory group create <name> <path...>`'
+          : all.map((group) => `${group.name}  (${group.members.length} member(s))\n${group.members.map((member) => `    ${member}`).join('\n')}`).join('\n'));
+        return 0;
+      }
+
+      if (!name) throw new Error(`group ${action} needs a group name`);
+      const paths = args.positional.slice(2);
+
+      if (action === 'create' || action === 'add') {
+        if (paths.length === 0) throw new Error(`group ${action} needs at least one path`);
+        const result = groups.upsertGroup(name, paths);
+        emit(args, result, () => result.status === 'ok'
+          ? `${name}: ${result.group.members.length} member(s), ${result.added.length} added`
+          : `not a directory: ${(result as { paths: string[] }).paths.join(', ')}`);
+        return result.status === 'ok' ? 0 : 1;
+      }
+
+      if (action === 'remove') {
+        const result = groups.removeFromGroup(name, paths);
+        emit(args, result, () => result.status === 'ok'
+          ? `${name}: removed ${result.removed.length}, ${result.group.members.length} left`
+          : `no group named ${name}`);
+        return result.status === 'ok' ? 0 : 1;
+      }
+
+      if (action === 'delete') {
+        const removed = groups.deleteGroup(name);
+        emit(args, { removed, name }, () => removed ? `removed the group ${name}` : `no group named ${name}`);
+        return removed ? 0 : 1;
+      }
+
+      throw new Error(`group takes list, create, add, remove or delete -- not ${JSON.stringify(action)}`);
+    }
+
+    case 'contracts': {
+      if (!args.positional[0]) throw new Error('contracts needs a group name');
+      const code = await import('./code.js');
+      const result = await code.runContracts(args.positional[0], {
+        includeTests: Boolean(args.flags['include-tests']),
+      });
+      emit(args, result, () => code.formatContracts(result));
+      return result.status === 'ok' ? 0 : 1;
     }
 
     case 'taint': {

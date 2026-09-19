@@ -60,6 +60,10 @@ export {
   query, type QueryResult, type QueryGroup, type QueryHit, type QueryOptions,
 } from './graph/query.js';
 export {
+  httpCalls, contracts, normalisePath, pathOf,
+  type HttpCall, type HttpCallOptions, type RepoSurface, type Contract, type ContractReport,
+} from './graph/group.js';
+export {
   taint, explain, SOURCES, SINKS, SANITIZERS,
   type TaintResult, type TaintFinding, type TaintOptions, type ExplainResult,
   type DeclarationMarkers, type MarkerHit, type Marker,
@@ -92,4 +96,5 @@ export { tokenize, tokenSet, stem, fold, TOKENIZER_VERSION, TOKENIZER_SCRIPTS }
   from './util/tokenize.js';
 export { nodeId, contentHash, shortHash } from './util/ids.js';
 export { canonicalizePath, samePath, storeDirFor, globalDir, registryPath, PLUGIN_DIR_NAME } from './util/paths.js';
+export { writeFileAtomic } from './util/atomic.js';
 export { log, failOpen, logFilePath } from './util/log.js';

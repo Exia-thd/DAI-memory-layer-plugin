@@ -138,6 +138,8 @@ Hướng dẫn theo từng việc, kể cả nên tự động hoá cái gì và
 | `dai-memory shape-check` | Route có vấn đề gì: trùng đường dẫn, tham số không ai dùng, không có handler |
 | `dai-memory api-impact <symbol>` | Những endpoint nào trả lời thông qua khai báo này |
 | `dai-memory tools` | Các MCP tool repo này khai báo |
+| `dai-memory group list\|create\|add\|remove\|delete` | Các repo hợp thành một hệ thống |
+| `dai-memory contracts <group>` | Repo nào trả lời lời gọi HTTP nào, và lời gọi nào không ai trả lời |
 | `dai-memory taint [--depth N]` | Đầu vào không tin cậy có thể chạm tới chỗ nguy hiểm nào, lần theo đồ thị lời gọi — là chỗ đáng đọc, không phải báo cáo lỗ hổng |
 | `dai-memory explain <symbol\|file>` | Phân tích đó nói gì về một khai báo hoặc một file |
 | `dai-memory pdg <symbol>` | Bên trong một khai báo: từng tên, được gán ở đâu, đọc ở đâu, dòng nào chỉ chạy khi có điều kiện |

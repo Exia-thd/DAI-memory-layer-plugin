@@ -302,6 +302,27 @@ const TOOLS = [
     },
   },
   {
+    name: 'dai_memory_groups',
+    description:
+      'The groups of repositories defined on this machine, each a list of projects that make up one '
+      + 'system. A group holds locations only: every answer about it is computed from the members\' '
+      + 'own stores when it is asked.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'dai_memory_contracts',
+    description:
+      'Which repository in a group answers which HTTP call: outbound calls found in one member '
+      + 'matched to routes found in another, on method and path with placeholders collapsed. Calls '
+      + 'nothing in the group answers are listed rather than dropped, and a member with no store is '
+      + 'named rather than silently left out. Nothing here checks request or response bodies.',
+    inputSchema: {
+      type: 'object',
+      properties: { group: { type: 'string' }, includeTests: { type: 'boolean' } },
+      required: ['group'],
+    },
+  },
+  {
     name: 'dai_memory_taint',
     description:
       'Where untrusted input could reach something dangerous: sources (request data, argv, the '
@@ -758,6 +779,19 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<un
         args.to,
         { apply: args.apply === true, includeText: args.includeText === true, includeTests: args.includeTests === true },
       );
+    }
+
+    case 'dai_memory_groups': {
+      const { readGroups } = await import('./groups.js');
+      return { groups: readGroups() };
+    }
+
+    case 'dai_memory_contracts': {
+      const { runContracts } = await import('./code.js');
+      if (typeof args.group !== 'string' || !args.group.trim()) {
+        throw new Error('dai_memory_contracts needs a group name.');
+      }
+      return runContracts(args.group, { includeTests: args.includeTests === true });
     }
 
     case 'dai_memory_taint': {
