@@ -138,6 +138,11 @@ A task-by-task guide is in [docs/usage.md](docs/usage.md).
 | `dai-memory detect-changes [--scope S] [--base REF]` | What a diff changes in declarations: dependents, flows, risk, and what it could not see |
 | `dai-memory review [--base REF]` | A branch as a reviewer wants it: what can break other files, which modules, who has worked there |
 | `dai-memory rename <symbol> <new name> [--apply]` | Rename through the call graph. Other occurrences of the word are reported, not rewritten; nothing is written without `--apply` |
+| `dai-memory check [--fail-on S]` | Invariants over the code graph -- import cycles and the rest -- with what each rule examined |
+| `dai-memory code-clusters [--min-size N]` | Communities in the call graph, named after the directory most of each lives in |
+| `dai-memory cypher <query>` | One read-only query against the store. Writing clauses are refused, and a query with no LIMIT is given one |
+| `dai-memory status` | What is indexed, from which commit, and whether the working tree has moved on |
+| `dai-memory clean --yes` | Remove this project's store. Nothing goes without `--yes` |
 | `dai-memory clusters` | Communities in the memory graph, with any stored summary |
 | `dai-memory summarize <id> --body S` | Record a summary for a group, linked to its members |
 | `dai-memory session start\|end` | Open or close a session, so writes record when they happened |

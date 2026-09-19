@@ -178,6 +178,16 @@ const USAGE = `dai-memory - project memory layer
       A branch as a reviewer wants it: what can break, where, and who has worked there.
   dai-memory rename <symbol> <new name> [--file F] [--uid ID] [--apply] [--include-text] [--json]
       Rename through the call graph. Shows the plan; --apply writes it.
+  dai-memory check [--fail-on error|warning] [--include-tests] [--json]
+      Invariants over the code graph, with what each rule examined.
+  dai-memory code-clusters [--min-size N] [--limit N] [--json]
+      Communities in the call graph: the parts that talk to each other.
+  dai-memory cypher <query> [--limit N] [--json]
+      One read-only query against the store. Writing clauses are refused.
+  dai-memory status [--json]
+      What is indexed, from which commit, and whether that is still current.
+  dai-memory clean --yes
+      Remove this project's store. Nothing is removed without --yes.
                           the shortest call path between two declarations
   dai-memory prune [--older-than 90] [--dry-run]  forget old, unreferenced episodic memories
   dai-memory ui [path] [--out FILE] [--max-nodes N]
@@ -642,6 +652,56 @@ reclaimed ${report.vanished} file(s) no longer on disk` : '') +
       });
       emit(args, found, () => code.formatQuery(found));
       return 0;
+    }
+
+    case 'check': {
+      const code = await import('./code.js');
+      const result = await code.runCheck({
+        includeTests: Boolean(args.flags['include-tests']),
+        examples: numberFlag(args, 'examples'),
+      });
+      emit(args, result, () => code.formatCheck(result));
+      // Findings are information, not failure: a warning about an import cycle
+      // must not stop a commit unless somebody asked it to.
+      const failOn = stringFlag(args, 'fail-on');
+      if (failOn === 'warning') return result.summary.errors + result.summary.warnings > 0 ? 1 : 0;
+      if (failOn === 'error') return result.summary.errors > 0 ? 1 : 0;
+      return 0;
+    }
+
+    case 'code-clusters': {
+      const code = await import('./code.js');
+      const result = await code.runCodeClusters({
+        minSize: numberFlag(args, 'min-size'),
+        limit: numberFlag(args, 'limit'),
+        includeTests: Boolean(args.flags['include-tests']),
+      });
+      emit(args, result, () => code.formatCodeClusters(result));
+      return 0;
+    }
+
+    case 'cypher': {
+      if (!args.positional[0]) throw new Error('cypher needs a query');
+      const code = await import('./code.js');
+      const result = await code.runCypher(args.positional.join(' '), { limit: numberFlag(args, 'limit') });
+      emit(args, result, () => code.formatCypher(result));
+      return result.status === 'ok' ? 0 : 1;
+    }
+
+    case 'status': {
+      const code = await import('./code.js');
+      const result = await code.runStatus();
+      emit(args, result, () => code.formatStatus(result));
+      return 0;
+    }
+
+    case 'clean': {
+      const { cleanStore } = await import('./clean.js');
+      const result = cleanStore({ confirmed: Boolean(args.flags.yes) });
+      emit(args, result, () => result.status === 'removed'
+        ? [`removed ${result.dir}`, 'the project is no longer indexed; `dai-memory init` builds it again'].join('\n')
+        : [result.dir, result.reason].join('\n'));
+      return result.status === 'removed' ? 0 : 1;
     }
 
     case 'rename': {

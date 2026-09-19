@@ -60,6 +60,10 @@ export {
   query, type QueryResult, type QueryGroup, type QueryHit, type QueryOptions,
 } from './graph/query.js';
 export {
+  check, importCycles, codeClusters, readOnlyCypher,
+  type CheckResult, type CheckOptions, type Finding, type Severity, type CodeCluster, type CypherCheck,
+} from './graph/inspect.js';
+export {
   planRename, applyRename,
   type RenamePlan, type RenameRefusal, type RenameEdit, type TextMatch, type RenameOptions, type AppliedRename,
 } from './graph/rename.js';

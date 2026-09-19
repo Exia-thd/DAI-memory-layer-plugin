@@ -2,8 +2,9 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema, ListToolsRequestSchema,
+  ListResourcesRequestSchema, ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { LAYERS, EDGE_TYPES, type Layer, type EdgeType, log } from '@memory-layer/core';
+import { LAYERS, EDGE_TYPES, ddl, readMeta, type Layer, type EdgeType, log } from '@memory-layer/core';
 import * as api from './api.js';
 import { isStale, storeDirOrThrow } from './project.js';
 
@@ -301,6 +302,44 @@ const TOOLS = [
     },
   },
   {
+    name: 'dai_memory_check',
+    description:
+      'Invariants over the code graph: import cycles, declarations that take part in nothing, files '
+      + 'that declare nothing indexed. Each finding says what it means and each rule reports what it '
+      + 'examined, so an empty result can be told apart from a rule that looked at nothing.',
+    inputSchema: { type: 'object', properties: { includeTests: { type: 'boolean' }, examples: { type: 'number' } } },
+  },
+  {
+    name: 'dai_memory_code_clusters',
+    description:
+      'Communities in the call graph: the parts of the codebase that talk to each other more than to '
+      + 'the rest, named after the directory most of each lives in. Use it to learn the shape of an '
+      + 'unfamiliar repository. This is the code graph, not the memory graph -- dai_memory_clusters is that one.',
+    inputSchema: {
+      type: 'object',
+      properties: { minSize: { type: 'number' }, limit: { type: 'number' }, includeTests: { type: 'boolean' } },
+    },
+  },
+  {
+    name: 'dai_memory_cypher',
+    description:
+      'One read-only Cypher query against the store, for a question no other tool answers. Writing '
+      + 'clauses (CREATE, MERGE, SET, DELETE, DROP, CALL and the rest) are refused, several statements '
+      + 'in one query are refused, and a query without LIMIT is given one.',
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string' }, limit: { type: 'number' } },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'dai_memory_status',
+    description:
+      'What is indexed here: the project, the commit the graph was built from, whether the working '
+      + 'tree has moved on since, the store schema and embedding, and the size of the graph.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'dai_memory_clusters',
     description:
       'Groups of related memories, with the summary somebody wrote for each group ' +
@@ -350,10 +389,33 @@ const TOOLS = [
 export async function serve(): Promise<void> {
   const server = new Server(
     { name: 'memory-layer', version: '0.1.0' },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {}, resources: {} } },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+
+  // Resources are the whole-repository answers: what this codebase is, what
+  // runs in it, and how it is grouped. A client reads them once to orient
+  // itself rather than asking a tool the same question every turn.
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: await listResources() }));
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const uri = request.params.uri;
+    try {
+      const contents = await readResource(uri);
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(contents, null, 2) }] };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log('error', `resource ${uri} failed: ${message}`);
+      return {
+        contents: [{
+          uri,
+          mimeType: 'application/json',
+          text: JSON.stringify({ error: message }, null, 2),
+        }],
+      };
+    }
+  });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: rawArgs } = request.params;
@@ -615,6 +677,31 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<un
       );
     }
 
+    case 'dai_memory_check': {
+      const { runCheck } = await import('./code.js');
+      return runCheck({ includeTests: args.includeTests === true, examples: numeric(args.examples) });
+    }
+
+    case 'dai_memory_code_clusters': {
+      const { runCodeClusters } = await import('./code.js');
+      return runCodeClusters({
+        minSize: numeric(args.minSize),
+        limit: numeric(args.limit),
+        includeTests: args.includeTests === true,
+      });
+    }
+
+    case 'dai_memory_cypher': {
+      const { runCypher } = await import('./code.js');
+      if (typeof args.query !== 'string' || !args.query.trim()) throw new Error('dai_memory_cypher needs a query.');
+      return runCypher(args.query, { limit: numeric(args.limit) });
+    }
+
+    case 'dai_memory_status': {
+      const { runStatus } = await import('./code.js');
+      return runStatus();
+    }
+
     case 'dai_memory_clusters':
       return { clusters: await api.runClusters() };
 
@@ -674,4 +761,99 @@ function numeric(value: unknown): number | undefined {
   if (value === undefined || value === null) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * The resources this server offers, named after the project they describe.
+ *
+ * `dai-memory://<project>/context` is the orientation one: what this codebase
+ * is, how big, when it was indexed. The others are the whole-repository
+ * answers that a tool call would otherwise repeat every turn.
+ */
+async function listResources(): Promise<Array<{ uri: string; name: string; description: string; mimeType: string }>> {
+  const { runStatus } = await import('./code.js');
+  const status = await runStatus();
+  const project = status.project.name;
+  const resource = (path: string, name: string, description: string) => ({
+    uri: `dai-memory://${project}/${path}`,
+    name,
+    description,
+    mimeType: 'application/json',
+  });
+  return [
+    resource('context', `${project}: what this is`, 'The project, the commit its graph was built from, whether that is still current, and how big the graph is.'),
+    resource('processes', `${project}: execution flows`, 'Every execution flow: an entry point and what it reaches, with the rule that found the entry points.'),
+    resource('clusters', `${project}: code clusters`, 'Communities in the call graph, named after the directory most of each lives in.'),
+    resource('memory-clusters', `${project}: memory clusters`, 'Communities in the memory graph, with any summary somebody recorded for them.'),
+    resource('check', `${project}: invariants`, 'Import cycles and the other invariants, with what each rule examined.'),
+    resource('schema', `${project}: graph schema`, 'The node and relationship types in the store, for writing a Cypher query against it.'),
+  ];
+}
+
+/**
+ * The schema, read out of the DDL the store was created with.
+ *
+ * Written by hand it would be a second source of truth, and the first thing to
+ * go stale: this file said `filePath` while the store has `file_path`, and a
+ * query written from it fails with "cannot find property". Derived, it cannot
+ * drift.
+ */
+function graphSchema(): unknown {
+  const statements = ddl(readMeta(storeDirOrThrow()).dimensions);
+  const nodes: Record<string, string[]> = {};
+  const relationships: Record<string, { from: string; to: string; properties: string[] }> = {};
+
+  for (const statement of statements) {
+    const node = /CREATE NODE TABLE (?:IF NOT EXISTS )?(\w+)\(([\s\S]*)\)/i.exec(statement);
+    if (node) {
+      nodes[node[1]!] = columnsOf(node[2]!);
+      continue;
+    }
+    const rel = /CREATE REL TABLE (?:IF NOT EXISTS )?(\w+)\(([\s\S]*)\)/i.exec(statement);
+    if (rel) {
+      const body = rel[2]!;
+      const ends = /FROM (\w+) TO (\w+)/i.exec(body);
+      relationships[rel[1]!] = {
+        from: ends?.[1] ?? 'unknown',
+        to: ends?.[2] ?? 'unknown',
+        properties: columnsOf(body),
+      };
+    }
+  }
+
+  return {
+    nodes,
+    relationships,
+    notes: [
+      'Containment is not an edge: a member is its container id plus a dotted name, so `Symbol:a.ts:Class.method` is inside `Symbol:a.ts:Class`.',
+      'CALLS and INHERITS carry a confidence label, not a number. The scores used for ranking are type 1, file 0.95, receiver 0.9, import 0.85, unique 0.7.',
+      'Queries through dai_memory_cypher are read-only, one statement at a time, and get a LIMIT if they do not have one.',
+    ],
+  };
+}
+
+/** Column names from a table body, leaving out the key and edge declarations. */
+function columnsOf(body: string): string[] {
+  return body.split(',')
+    .map((part) => part.trim().split(/\s+/)[0] ?? '')
+    .filter((name) => name && !/^(primary|from|to)$/i.test(name));
+}
+
+async function readResource(uri: string): Promise<unknown> {
+  const match = /^dai-memory:\/\/([^/]+)\/(.+)$/.exec(uri);
+  if (!match) throw new Error(`not a resource of this server: ${uri}`);
+  const path = match[2]!;
+  const code = await import('./code.js');
+
+  if (path === 'context') return code.runStatus();
+  if (path === 'processes') return code.runProcesses({ limit: 200 });
+  if (path === 'clusters') return code.runCodeClusters({ limit: 50 });
+  if (path === 'memory-clusters') return { clusters: await api.runClusters() };
+  if (path === 'check') return code.runCheck();
+  if (path === 'schema') return graphSchema();
+
+  const process = /^process\/(.+)$/.exec(path);
+  if (process) return code.runProcess(decodeURIComponent(process[1]!));
+
+  throw new Error(`no such resource: ${path}. This server offers context, processes, process/<name>, clusters, memory-clusters, check and schema.`);
 }

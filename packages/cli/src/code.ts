@@ -1,10 +1,12 @@
 import {
   MemoryStore, loadCodeIndex, resolveTarget, impact, symbolContext, trace,
   buildProcesses, resolveProcess, query, detectChanges, review, planRename, applyRename,
+  check, codeClusters, readOnlyCypher, readMeta,
   type TargetQuery, type ImpactOptions, type ImpactResult, type ContextResult,
   type TraceResult, type TraceOptions, type Resolution, type CodeIndex, type SymbolRef,
   type ProcessIndex, type Process, type QueryResult,
   type DetectChangesResult, type ReviewResult, type RenamePlan, type RenameRefusal,
+  type CheckResult, type CodeCluster,
 } from '@memory-layer/core';
 import { storeDirOrThrow, resolveProject, changedHunks, fileAuthors, isStale } from './project.js';
 import fs from 'node:fs';
@@ -535,4 +537,146 @@ export function formatRename(result: RenameResult): string {
   }
   for (const limit of result.limits) lines.push(`note: ${limit}`);
   return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// check, clusters, cypher, status
+
+export async function runCheck(
+  options: { from?: string; includeTests?: boolean; examples?: number } = {},
+): Promise<CheckResult> {
+  return withIndex(options.from, async (_store, index) =>
+    check(index, { includeTests: options.includeTests, examples: options.examples }));
+}
+
+export async function runCodeClusters(
+  options: { from?: string; minSize?: number; includeTests?: boolean; limit?: number } = {},
+): Promise<{ status: 'ok'; clusters: CodeCluster[]; summary: { clusters: number; shown: number; rule: string } }> {
+  return withIndex(options.from, async (_store, index) => {
+    const found = codeClusters(index, { minSize: options.minSize, includeTests: options.includeTests });
+    const limit = Math.max(1, Math.floor(options.limit ?? 20));
+    return {
+      status: 'ok' as const,
+      clusters: found.slice(0, limit),
+      summary: {
+        clusters: found.length,
+        shown: Math.min(limit, found.length),
+        rule: 'Louvain communities over calls, inheritance and containment, named after the directory most of each lives in',
+      },
+    };
+  });
+}
+
+export type CypherResult =
+  | { status: 'ok'; query: string; rows: Record<string, unknown>[]; truncated: boolean }
+  | { status: 'refused'; reason: string };
+
+/** A read-only query against the store, guarded before it is sent. */
+export async function runCypher(
+  text: string,
+  options: { from?: string; limit?: number } = {},
+): Promise<CypherResult> {
+  const limit = Math.max(1, Math.floor(options.limit ?? 100));
+  const guarded = readOnlyCypher(text, limit);
+  if (!guarded.ok) return { status: 'refused', reason: guarded.reason };
+  const store = new MemoryStore(storeDirOrThrow(options.from), { readOnly: true });
+  try {
+    const rows = await store.query(guarded.query);
+    return { status: 'ok', query: guarded.query, rows, truncated: rows.length >= limit };
+  } finally {
+    await store.close();
+  }
+}
+
+export interface StatusResult {
+  status: 'ok';
+  project: { name: string; root: string; branch: string | null; head: string | null };
+  index: { indexedCommit: string | null; stale: boolean; schemaVersion: number; dimensions: number; embedding: string | null };
+  graph: { files: number; declarations: number; calls: number; inherits: number; imports: number; ready: boolean };
+}
+
+export async function runStatus(options: { from?: string } = {}): Promise<StatusResult> {
+  const project = resolveProject(options.from);
+  const dir = storeDirOrThrow(options.from);
+  const meta = readMeta(dir);
+  const staleness = isStale(dir);
+  const store = new MemoryStore(dir, { readOnly: true });
+  try {
+    const files = new Set<string>();
+    let declarations = 0;
+    if (store.graphReady) {
+      for (const symbol of await store.allSymbols()) {
+        files.add(symbol.filePath);
+        declarations += 1;
+      }
+    }
+    return {
+      status: 'ok',
+      project: { name: project.name, root: project.root, branch: project.branch, head: staleness.head },
+      index: {
+        indexedCommit: staleness.indexed,
+        stale: staleness.stale,
+        schemaVersion: meta.schemaVersion,
+        dimensions: meta.dimensions,
+        embedding: meta.embedding ? `${meta.embedding.provider}:${meta.embedding.model}` : null,
+      },
+      graph: {
+        files: files.size,
+        declarations,
+        calls: store.graphReady ? (await store.allCalls()).length : 0,
+        inherits: store.graphReady ? (await store.allInherits()).length : 0,
+        imports: store.graphReady ? (await store.allImports()).length : 0,
+        ready: store.graphReady,
+      },
+    };
+  } finally {
+    await store.close();
+  }
+}
+
+export function formatCheck(result: CheckResult): string {
+  const lines: string[] = [];
+  if (result.findings.length === 0) lines.push('nothing to report');
+  for (const finding of result.findings) {
+    lines.push(`[${finding.severity}] ${finding.rule}: ${finding.message}`);
+    for (const where of finding.where) lines.push(`    ${where}`);
+  }
+  lines.push('', 'what each rule looked at:');
+  for (const [rule, count] of Object.entries(result.summary.examined)) {
+    lines.push(`  ${rule}: ${count}`);
+  }
+  return lines.join('\n');
+}
+
+export function formatCodeClusters(result: { clusters: CodeCluster[]; summary: { clusters: number; shown: number; rule: string } }): string {
+  const lines = [`${result.summary.clusters} cluster(s) in the code graph`, ''];
+  for (const cluster of result.clusters) {
+    lines.push(`${cluster.name}  (${cluster.size} declaration(s) in ${cluster.files.length} file(s))`);
+    for (const member of cluster.members) lines.push(`    ${member.qualified}  ${member.filePath}:${member.startLine}  (${member.degree} edges)`);
+  }
+  lines.push('', `rule: ${result.summary.rule}`);
+  if (result.summary.shown < result.summary.clusters) {
+    lines.push(`showing ${result.summary.shown} of ${result.summary.clusters} (--limit for more)`);
+  }
+  return lines.join('\n');
+}
+
+export function formatCypher(result: CypherResult): string {
+  if (result.status === 'refused') return `refused: ${result.reason}`;
+  const lines = [result.query, ''];
+  for (const row of result.rows) lines.push(JSON.stringify(row));
+  lines.push('', `${result.rows.length} row(s)${result.truncated ? ' -- the limit was reached, there may be more' : ''}`);
+  return lines.join('\n');
+}
+
+export function formatStatus(result: StatusResult): string {
+  return [
+    `${result.project.name}  ${result.project.root}`,
+    `branch ${result.project.branch ?? 'unknown'}, HEAD ${result.project.head ?? 'unknown'}`,
+    `indexed at ${result.index.indexedCommit ?? 'unknown'}${result.index.stale ? '  -- the working tree has moved on, run `dai-memory ingest`' : '  -- current'}`,
+    `store: schema ${result.index.schemaVersion}, ${result.index.dimensions} dimensions, embedding ${result.index.embedding ?? 'none recorded'}`,
+    result.graph.ready
+      ? `graph: ${result.graph.declarations} declaration(s) in ${result.graph.files} file(s); ${result.graph.calls} call(s), ${result.graph.inherits} inherit(s), ${result.graph.imports} import(s)`
+      : 'graph: not built -- run `dai-memory init`',
+  ].join('\n');
 }
