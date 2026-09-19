@@ -188,6 +188,14 @@ const USAGE = `dai-memory - project memory layer
       What is indexed, from which commit, and whether that is still current.
   dai-memory clean --yes
       Remove this project's store. Nothing is removed without --yes.
+  dai-memory routes [--include-tests] [--json]
+      The HTTP routes this repository declares, and what handles each.
+  dai-memory shape-check [--json]
+      What is wrong with the routes: duplicates, unbound parameters, no handler.
+  dai-memory api-impact <symbol> [--depth N] [--json]
+      Which endpoints answer through a declaration.
+  dai-memory tools [--json]
+      The MCP tools this repository declares.
                           the shortest call path between two declarations
   dai-memory prune [--older-than 90] [--dry-run]  forget old, unreferenced episodic memories
   dai-memory ui [path] [--out FILE] [--max-nodes N]
@@ -651,6 +659,42 @@ reclaimed ${report.vanished} file(s) no longer on disk` : '') +
         includeTests: Boolean(args.flags['include-tests']),
       });
       emit(args, found, () => code.formatQuery(found));
+      return 0;
+    }
+
+    case 'routes': {
+      const code = await import('./code.js');
+      const result = await code.runRouteMap({ includeTests: Boolean(args.flags['include-tests']) });
+      emit(args, result, () => code.formatRouteMap(result));
+      return 0;
+    }
+
+    case 'shape-check': {
+      const code = await import('./code.js');
+      const result = await code.runShapeCheck({ includeTests: Boolean(args.flags['include-tests']) });
+      emit(args, result, () => code.formatShapeCheck(result));
+      return 0;
+    }
+
+    case 'api-impact': {
+      if (!args.positional[0] && !stringFlag(args, 'uid')) throw new Error('api-impact needs a symbol name or --uid');
+      const code = await import('./code.js');
+      const result = await code.runApiImpact(
+        { name: args.positional[0], uid: stringFlag(args, 'uid'), file: stringFlag(args, 'file') },
+        { maxDepth: numberFlag(args, 'depth'), includeTests: Boolean(args.flags['include-tests']) },
+      );
+      if (result.status === 'ok') {
+        emit(args, result, () => code.formatApiImpact(result as never));
+        return 0;
+      }
+      emit(args, result, () => code.formatUnresolved(result as never));
+      return 1;
+    }
+
+    case 'tools': {
+      const code = await import('./code.js');
+      const result = await code.runToolMap({ includeTests: Boolean(args.flags['include-tests']) });
+      emit(args, result, () => code.formatToolMap(result));
       return 0;
     }
 

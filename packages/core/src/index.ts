@@ -60,6 +60,11 @@ export {
   query, type QueryResult, type QueryGroup, type QueryHit, type QueryOptions,
 } from './graph/query.js';
 export {
+  routeMap, shapeCheck, apiImpact, toolMap, FRAMEWORKS,
+  type Route, type RouteMap, type RouteOptions, type ShapeCheckResult, type RouteProblem,
+  type ApiImpactResult, type ToolMap, type ToolDefinition,
+} from './graph/api.js';
+export {
   check, importCycles, codeClusters, readOnlyCypher,
   type CheckResult, type CheckOptions, type Finding, type Severity, type CodeCluster, type CypherCheck,
 } from './graph/inspect.js';

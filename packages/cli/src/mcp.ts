@@ -302,6 +302,45 @@ const TOOLS = [
     },
   },
   {
+    name: 'dai_memory_routes',
+    description:
+      'The HTTP routes this repository declares and the declaration each sits in, read per framework '
+      + 'from the source text. A path built at runtime is reported with no path rather than guessed, '
+      + 'and the answer lists which frameworks were looked for -- no routes found is not the same as '
+      + 'a service having none.',
+    inputSchema: { type: 'object', properties: { includeTests: { type: 'boolean' } } },
+  },
+  {
+    name: 'dai_memory_shape_check',
+    description:
+      'What is wrong with the routes themselves: the same method and path declared twice, a path '
+      + 'parameter the handler never mentions, a route with no indexed handler. Each is a question '
+      + 'for a person, not a verdict.',
+    inputSchema: { type: 'object', properties: { includeTests: { type: 'boolean' } } },
+  },
+  {
+    name: 'dai_memory_api_impact',
+    description:
+      'Which endpoints answer through a declaration: the routes whose handlers reach it, with how '
+      + 'many calls away each is. Use it before changing something a service exposes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string' },
+        uid: { type: 'string' },
+        file: { type: 'string' },
+        maxDepth: { type: 'number', description: '1-8, default 5.' },
+        includeTests: { type: 'boolean' },
+      },
+    },
+  },
+  {
+    name: 'dai_memory_tool_map',
+    description:
+      'The MCP tools this repository declares, where each is defined and how it was recognised.',
+    inputSchema: { type: 'object', properties: { includeTests: { type: 'boolean' } } },
+  },
+  {
     name: 'dai_memory_check',
     description:
       'Invariants over the code graph: import cycles, declarations that take part in nothing, files '
@@ -677,6 +716,32 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<un
       );
     }
 
+    case 'dai_memory_routes': {
+      const { runRouteMap } = await import('./code.js');
+      return runRouteMap({ includeTests: args.includeTests === true });
+    }
+
+    case 'dai_memory_shape_check': {
+      const { runShapeCheck } = await import('./code.js');
+      return runShapeCheck({ includeTests: args.includeTests === true });
+    }
+
+    case 'dai_memory_api_impact': {
+      const { runApiImpact } = await import('./code.js');
+      if (!optionalString(args.target) && !optionalString(args.uid)) {
+        throw new Error('dai_memory_api_impact needs a target name or uid.');
+      }
+      return runApiImpact(
+        { name: optionalString(args.target), uid: optionalString(args.uid), file: optionalString(args.file) },
+        { maxDepth: numeric(args.maxDepth), includeTests: args.includeTests === true },
+      );
+    }
+
+    case 'dai_memory_tool_map': {
+      const { runToolMap } = await import('./code.js');
+      return runToolMap({ includeTests: args.includeTests === true });
+    }
+
     case 'dai_memory_check': {
       const { runCheck } = await import('./code.js');
       return runCheck({ includeTests: args.includeTests === true, examples: numeric(args.examples) });
@@ -785,6 +850,7 @@ async function listResources(): Promise<Array<{ uri: string; name: string; descr
     resource('processes', `${project}: execution flows`, 'Every execution flow: an entry point and what it reaches, with the rule that found the entry points.'),
     resource('clusters', `${project}: code clusters`, 'Communities in the call graph, named after the directory most of each lives in.'),
     resource('memory-clusters', `${project}: memory clusters`, 'Communities in the memory graph, with any summary somebody recorded for them.'),
+    resource('routes', `${project}: HTTP surface`, 'Every route this repository declares, the declaration each sits in, and which frameworks were looked for.'),
     resource('check', `${project}: invariants`, 'Import cycles and the other invariants, with what each rule examined.'),
     resource('schema', `${project}: graph schema`, 'The node and relationship types in the store, for writing a Cypher query against it.'),
   ];
@@ -849,6 +915,7 @@ async function readResource(uri: string): Promise<unknown> {
   if (path === 'processes') return code.runProcesses({ limit: 200 });
   if (path === 'clusters') return code.runCodeClusters({ limit: 50 });
   if (path === 'memory-clusters') return { clusters: await api.runClusters() };
+  if (path === 'routes') return code.runRouteMap();
   if (path === 'check') return code.runCheck();
   if (path === 'schema') return graphSchema();
 

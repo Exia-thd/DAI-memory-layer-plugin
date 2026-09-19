@@ -2,11 +2,13 @@ import {
   MemoryStore, loadCodeIndex, resolveTarget, impact, symbolContext, trace,
   buildProcesses, resolveProcess, query, detectChanges, review, planRename, applyRename,
   check, codeClusters, readOnlyCypher, readMeta,
+  routeMap, shapeCheck, apiImpact, toolMap,
   type TargetQuery, type ImpactOptions, type ImpactResult, type ContextResult,
   type TraceResult, type TraceOptions, type Resolution, type CodeIndex, type SymbolRef,
   type ProcessIndex, type Process, type QueryResult,
   type DetectChangesResult, type ReviewResult, type RenamePlan, type RenameRefusal,
   type CheckResult, type CodeCluster,
+  type RouteMap, type ShapeCheckResult, type ApiImpactResult, type ToolMap,
 } from '@memory-layer/core';
 import { storeDirOrThrow, resolveProject, changedHunks, fileAuthors, isStale } from './project.js';
 import fs from 'node:fs';
@@ -679,4 +681,95 @@ export function formatStatus(result: StatusResult): string {
       ? `graph: ${result.graph.declarations} declaration(s) in ${result.graph.files} file(s); ${result.graph.calls} call(s), ${result.graph.inherits} inherit(s), ${result.graph.imports} import(s)`
       : 'graph: not built -- run `dai-memory init`',
   ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// the HTTP surface
+
+/** Reads a file from the project, for the extractors that work on text. */
+function projectReader(from?: string): (file: string) => string | undefined {
+  const project = resolveProject(from);
+  return (file: string) => {
+    try {
+      return fs.readFileSync(path.join(project.root, file), 'utf8');
+    } catch {
+      return undefined;
+    }
+  };
+}
+
+export async function runRouteMap(options: { from?: string; includeTests?: boolean } = {}): Promise<RouteMap> {
+  const read = projectReader(options.from);
+  return withIndex(options.from, async (_store, index) =>
+    routeMap(index, { read, includeTests: options.includeTests }));
+}
+
+export async function runShapeCheck(options: { from?: string; includeTests?: boolean } = {}): Promise<ShapeCheckResult> {
+  const read = projectReader(options.from);
+  return withIndex(options.from, async (_store, index) =>
+    shapeCheck(routeMap(index, { read, includeTests: options.includeTests }), { read }));
+}
+
+export async function runApiImpact(
+  target: TargetQuery,
+  options: { from?: string; maxDepth?: number; includeTests?: boolean } = {},
+): Promise<ApiImpactResult | Unresolved> {
+  const read = projectReader(options.from);
+  return withIndex(options.from, async (_store, index) => {
+    const resolution = resolveTarget(index, target);
+    const refused = unresolved('target', target, resolution);
+    if (refused) return refused;
+    const map = routeMap(index, { read, includeTests: options.includeTests });
+    return apiImpact(index, map, (resolution as { id: string }).id, {
+      maxDepth: options.maxDepth,
+      includeTests: options.includeTests,
+    });
+  });
+}
+
+export async function runToolMap(options: { from?: string; includeTests?: boolean } = {}): Promise<ToolMap> {
+  const read = projectReader(options.from);
+  return withIndex(options.from, async (_store, index) =>
+    toolMap(index, { read, includeTests: options.includeTests }));
+}
+
+export function formatRouteMap(result: RouteMap): string {
+  const lines = [`${result.summary.routes} route(s) across ${result.summary.filesScanned} file(s)`, ''];
+  for (const route of result.routes) {
+    lines.push(`  ${route.method.padEnd(6)} ${route.path ?? '(built at runtime)'}  ${route.file}:${route.line}`
+      + `  [${route.framework}, ${percent(route.confidence)}]${route.handler ? `  -> ${route.handler.qualified}` : ''}`);
+  }
+  lines.push('', `frameworks found: ${result.summary.frameworks.join(', ') || 'none'}`);
+  for (const limit of result.limits) lines.push(`note: ${limit}`);
+  return lines.join('\n');
+}
+
+export function formatShapeCheck(result: ShapeCheckResult): string {
+  const lines = result.problems.length === 0
+    ? ['nothing to report about the routes']
+    : result.problems.map((problem) => [
+      `[${problem.kind}] ${problem.message}`,
+      ...problem.routes.map((route) => `    ${route.method} ${route.path ?? '(runtime)'}  ${route.file}:${route.line}`),
+    ].join('\n'));
+  lines.push('', `checked ${result.summary.routes} route(s) for: ${result.summary.checked.join('; ')}`);
+  return lines.join('\n');
+}
+
+export function formatApiImpact(result: ApiImpactResult): string {
+  const lines = [`endpoints answering through ${result.target.qualified}:`, ''];
+  for (const route of result.routes) {
+    lines.push(`  ${route.method.padEnd(6)} ${route.path ?? '(runtime)'}  ${route.file}:${route.line}  (d=${route.depth}, handler ${route.handler})`);
+  }
+  lines.push('', result.summary.note);
+  return lines.join('\n');
+}
+
+export function formatToolMap(result: ToolMap): string {
+  const lines = [`${result.summary.tools} MCP tool(s) declared in ${result.summary.filesScanned} file(s)`, ''];
+  for (const tool of result.tools) {
+    lines.push(`  ${tool.name}  ${tool.file}:${tool.line}  [${tool.style}]`);
+    if (tool.description) lines.push(`      ${tool.description}`);
+  }
+  lines.push('', `looked for: ${result.summary.stylesLookedFor.join('; ')}`);
+  return lines.join('\n');
 }

@@ -134,6 +134,10 @@ Hướng dẫn theo từng việc, kể cả nên tự động hoá cái gì và
 | `dai-memory detect-changes [--scope S] [--base REF]` | Một diff đổi những khai báo nào: ai phụ thuộc, luồng nào chạy qua, mức rủi ro, và phần nó không thấy được |
 | `dai-memory review [--base REF]` | Nhánh này dưới mắt người review: cái gì làm vỡ file khác, đụng module nào, ai từng làm ở đó |
 | `dai-memory rename <symbol> <tên mới> [--apply]` | Đổi tên theo đồ thị lời gọi. Những chỗ khác có cùng từ thì chỉ báo chứ không sửa; không có `--apply` thì không ghi gì |
+| `dai-memory routes` | Các route HTTP repo này khai báo, theo từng framework, và ai xử lý mỗi route |
+| `dai-memory shape-check` | Route có vấn đề gì: trùng đường dẫn, tham số không ai dùng, không có handler |
+| `dai-memory api-impact <symbol>` | Những endpoint nào trả lời thông qua khai báo này |
+| `dai-memory tools` | Các MCP tool repo này khai báo |
 | `dai-memory check [--fail-on S]` | Các bất biến của code graph — import vòng và những thứ khác — kèm phần mỗi quy tắc đã xem xét |
 | `dai-memory code-clusters [--min-size N]` | Cụm trong đồ thị lời gọi, đặt tên theo thư mục chứa phần lớn cụm đó |
 | `dai-memory cypher <query>` | Một truy vấn chỉ đọc vào kho. Mệnh đề ghi bị từ chối, truy vấn thiếu LIMIT thì được thêm |
