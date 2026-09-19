@@ -33,8 +33,8 @@ importers:
   packages/core:
     dependencies:
       '@ladybugdb/core':
-        specifier: 0.20.3
-        version: 0.20.3
+        specifier: 0.20.4
+        version: 0.20.4
       graphology:
         specifier: ^0.25.4
         version: 0.25.4(graphology-types@0.24.8)
@@ -214,33 +214,33 @@ packages:
     resolution: {integrity: sha512-wgm9Ehl2jpeqP3zw/7mo3kRHFp5MEDhqAdwy1fTGkHAwnkGOVsgpvQhL8B5n1qlb01jV3n/bI0ZfZp5lWA1k4w==}
     engines: {node: '>=18.0.0'}
 
-  '@ladybugdb/core-darwin-arm64@0.20.3':
-    resolution: {integrity: sha512-HkeuuMhqTGYsTpM5npSM2k1HwiGRoPgVaUKld66OcP90XeG4J0FN+1Xm4IC5o9jE6fKpflUv5jRnB2uiU2IptA==}
+  '@ladybugdb/core-darwin-arm64@0.20.4':
+    resolution: {integrity: sha512-dFQC85hYo5PdDzU0tM2UNi/XWbgBeoguXtEFJvdGLHRHfT7VbW7FzhSXw2F5dgxqNsPJZUOB+si+U8GOxzbntQ==}
     cpu: [arm64]
     os: [darwin]
 
-  '@ladybugdb/core-darwin-x64@0.20.3':
-    resolution: {integrity: sha512-Ntw7qFy74WgUpbTvF8GBrr82fDgWCOTiSje8XHjlCi4wIVAOCa43yvwzo/eOj+QySoOs0Mc7w6Ex7zabd5hkyQ==}
+  '@ladybugdb/core-darwin-x64@0.20.4':
+    resolution: {integrity: sha512-p9bSfD7Kr/8vDjkUDa2q2nmuP/ru1St4buzU03QsjSSFrzRPDmGwgTdWTG5KlhqEdy5p7rkSLm1qkOVj7Ui/+w==}
     cpu: [x64]
     os: [darwin]
 
-  '@ladybugdb/core-linux-arm64@0.20.3':
-    resolution: {integrity: sha512-cDvsdriDAvy1O2IQnsUHXKVZAkpvcD5z8f9J1TkGogVyWXdrrr+NrImLELb6brguI9nw+KBB1CKOMnPE0CuTdQ==}
+  '@ladybugdb/core-linux-arm64@0.20.4':
+    resolution: {integrity: sha512-TfSavLHPgW9XgDbpvzzj7WgX/haMwx/gVt90BdIGPFUI7GeJmtdOZeRzlNo5SQvU/OYzKjVGQ8orKmYX2eMyJQ==}
     cpu: [arm64]
     os: [linux]
 
-  '@ladybugdb/core-linux-x64@0.20.3':
-    resolution: {integrity: sha512-F7jXUSaCtxAFgy9p3qxE1D5FX57ag3CsekYXrH0g1tmGZHXPmlQnLA2a2MDk6V2lSzhfWX5NJA2fFGXp0uKAog==}
+  '@ladybugdb/core-linux-x64@0.20.4':
+    resolution: {integrity: sha512-xfCyzIJuGz2dQqWXiw1otKILhbiJT2AZqYxv5dFW4HexSvnWUnu9wildWm7p8Lrw+7lA604XnC3zs2TKZBQ3/A==}
     cpu: [x64]
     os: [linux]
 
-  '@ladybugdb/core-win32-x64@0.20.3':
-    resolution: {integrity: sha512-qoQOvKypqlh8Nv6ych7xmOlACOLJFLxVNbpIkL3PJ9qQf63kmFAT6B+btixLU2Bmq1foNKLyiWuoHfKhXdJTCg==}
+  '@ladybugdb/core-win32-x64@0.20.4':
+    resolution: {integrity: sha512-6mxm/G5TKC4wq9SQ92w1oCmQDQSh2JG+7oV6mykm3+d1Tx5bg6wz2zSOSjxZC+BpBKTskvaUBtlbrUihnz2K4g==}
     cpu: [x64]
     os: [win32]
 
-  '@ladybugdb/core@0.20.3':
-    resolution: {integrity: sha512-msCQt0kYDpeMJ7DgpLwAZ4russmmRWLHh8hYE3iU9YWVABFrGkCvtA+2RcHQWW3zUkWV44lW0ggZiHu+QyevEg==}
+  '@ladybugdb/core@0.20.4':
+    resolution: {integrity: sha512-4FZNrQHATBE6+9qbTPQBq0KLcY4QZgePjGZBgss+E4pchqav46lLd0iqeoDM0P3KBJtu9MTIgZXCvE80/mjwTg==}
 
   '@modelcontextprotocol/sdk@1.30.0':
     resolution: {integrity: sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA==}
@@ -1079,32 +1079,32 @@ snapshots:
     dependencies:
       minipass: 7.1.3
 
-  '@ladybugdb/core-darwin-arm64@0.20.3':
+  '@ladybugdb/core-darwin-arm64@0.20.4':
     optional: true
 
-  '@ladybugdb/core-darwin-x64@0.20.3':
+  '@ladybugdb/core-darwin-x64@0.20.4':
     optional: true
 
-  '@ladybugdb/core-linux-arm64@0.20.3':
+  '@ladybugdb/core-linux-arm64@0.20.4':
     optional: true
 
-  '@ladybugdb/core-linux-x64@0.20.3':
+  '@ladybugdb/core-linux-x64@0.20.4':
     optional: true
 
-  '@ladybugdb/core-win32-x64@0.20.3':
+  '@ladybugdb/core-win32-x64@0.20.4':
     optional: true
 
-  '@ladybugdb/core@0.20.3':
+  '@ladybugdb/core@0.20.4':
     dependencies:
       apache-arrow: 21.2.0
       cmake-js: 8.0.0
       node-addon-api: 6.1.0
     optionalDependencies:
-      '@ladybugdb/core-darwin-arm64': 0.20.3
-      '@ladybugdb/core-darwin-x64': 0.20.3
-      '@ladybugdb/core-linux-arm64': 0.20.3
-      '@ladybugdb/core-linux-x64': 0.20.3
-      '@ladybugdb/core-win32-x64': 0.20.3
+      '@ladybugdb/core-darwin-arm64': 0.20.4
+      '@ladybugdb/core-darwin-x64': 0.20.4
+      '@ladybugdb/core-linux-arm64': 0.20.4
+      '@ladybugdb/core-linux-x64': 0.20.4
+      '@ladybugdb/core-win32-x64': 0.20.4
     transitivePeerDependencies:
       - supports-color
 

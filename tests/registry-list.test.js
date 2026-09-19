@@ -52,14 +52,24 @@ test('R6-a: listing many projects keeps a small cost per project', () => {
     const entries = Array.from({ length: 50 }, (_, i) => fakeProject(root, `project-${i}`));
     const registry = path.join(repo.home, 'registry.json');
 
+    // Two runs per size, and the faster counts: this is wall clock around a
+    // process that spawns git once per project, so anything else on the machine
+    // is added to the number, and the minimum is the sample least polluted by
+    // it.
     const time = (count) => {
       fs.writeFileSync(registry, JSON.stringify(entries.slice(0, count)));
-      const started = Date.now();
-      const listed = JSON.parse(cli(repo, ['list', '--json']));
-      return { elapsed: Date.now() - started, listed };
+      let best = Infinity;
+      let listed;
+      for (let run = 0; run < 2; run++) {
+        const started = Date.now();
+        listed = JSON.parse(cli(repo, ['list', '--json']));
+        best = Math.min(best, Date.now() - started);
+      }
+      return { elapsed: best, listed };
     };
 
     const one = time(1);
+    const twentyFive = time(25);
     const fifty = time(50);
 
     assert.equal(fifty.listed.length, 50);
@@ -82,11 +92,37 @@ test('R6-a: listing many projects keeps a small cost per project', () => {
     // regression that matters -- somebody adding per-project work heavy enough
     // to make a registry of fifty unusable -- and does not claim a concurrency
     // win that this platform does not deliver.
-    const perProject = (fifty.elapsed - one.elapsed) / 49;
+    // Measured as a ratio, not in milliseconds.
+    //
+    // An absolute bound on milliseconds per project is a bound on how busy the
+    // machine is. The same code measured 4ms per project idle and 64ms while a
+    // build ran beside it, and the test failed for the build rather than for a
+    // regression. Load slows every size by roughly the same factor, so it
+    // cancels in a ratio: what stays true under load is that the fiftieth
+    // project costs about what the twenty-fifth did. Per-project work that grows
+    // with the size of the registry -- rescanning it once per entry, say -- is
+    // exactly what breaks that, and is the regression worth catching.
+    const marginal = (bigger, smaller, span) => (bigger.elapsed - smaller.elapsed) / span;
+    const early = marginal(twentyFive, one, 24);
+    const late = marginal(fifty, twentyFive, 25);
+    const detail = `1 took ${one.elapsed}ms, 25 took ${twentyFive.elapsed}ms, 50 took ${fifty.elapsed}ms `
+      + `(${early.toFixed(1)}ms then ${late.toFixed(1)}ms per project)`;
+
+    assert.ok(early > 0 && late > 0, `each size must cost more than the one before it: ${detail}`);
     assert.ok(
-      perProject < 60,
-      `each extra project costs ${perProject.toFixed(1)}ms (50 took ${fifty.elapsed}ms, ` +
-        `1 took ${one.elapsed}ms); something per-project got expensive`,
+      late < early * 3,
+      `the cost per project grows with the registry: ${detail}; something scans it per entry`,
+    );
+
+    // And a ceiling, deliberately loose. Measured here, one project costs about
+    // 50ms and the machine under a full test run makes that anything up to
+    // twice that, so a bound tight enough to notice a doubling would fail for
+    // load instead. This one catches the case that makes a registry of fifty
+    // unusable rather than merely slower -- and the ratio above is what guards
+    // the shape.
+    assert.ok(
+      late < 400,
+      `each extra project costs ${late.toFixed(1)}ms: ${detail}; listing fifty projects is no longer usable`,
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
