@@ -432,9 +432,15 @@ const RULES: Record<string, LanguageRule> = {
       importCalls: ['require'],
     },
   },
+  // Vendored as well. The bash grammar in tree-sitter-wasms fails on any
+  // `case ... in`: its scanner calls a function the runtime does not export
+  // ("resolved is not a function"), and the runtime then aborts. Nearly every
+  // real shell script has a `case`, so a scan of one lost almost all of them --
+  // it looked like the runtime running out of memory, and was not.
   bash: {
     label: 'bash',
     grammar: 'tree-sitter-bash.wasm',
+    vendored: true,
     mode: 'AST_DECLARATION',
     boundaries: ['function_definition'],
     symbols: ['function_definition'],

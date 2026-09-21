@@ -1,18 +1,18 @@
 /**
  * The grammar runtimes, and what happens when one of them dies.
  *
- * Each grammar is loaded into a WebAssembly runtime of its own -- deliberately,
- * because sharing one made a later grammar's scanner call an earlier one's
- * helper. Those runtimes were never released, so a long scan ended holding one
- * live heap per language, and on a repository of a few thousand files the next
- * parser could not be created: `new Parser()` aborted, the dead runtime stayed
- * cached, and every later file of that language was chunked by character
- * windows with no declarations read. Four hundred shell scripts went that way
- * under a line that said the scan had succeeded.
+ * A scan of a repository's shell scripts lost nearly all their declarations.
+ * The cause was the bash grammar: the build tree-sitter-wasms ships fails on
+ * any `case ... in`, its runtime aborts, and -- because the dead runtime stayed
+ * cached -- every later bash file failed too, under a line that said the scan
+ * had succeeded. It looked like memory exhaustion from long-lived runtimes, and
+ * the first fix treated it as that; the last test below is the one that names
+ * the real cause.
  *
- * Both halves of the fix are checked here by what they change, not by what
- * still works: how many runtimes get created, and what is reported when one
- * dies. A test that only parses a file passes equally well with the bug.
+ * Three things are checked, each by what it changes rather than by what still
+ * works: runtimes are retired after a budget, a dead runtime is dropped and the
+ * loss reported, and bash with a `case` keeps its declarations. A test that
+ * only parses a simple file passes equally well with every one of these bugs.
  */
 
 import { test, beforeEach, afterEach } from 'node:test';
@@ -98,5 +98,38 @@ test('failures are counted per language, and only for languages that had a parse
   resetGrammarState();
   const missing = { ...typescript, label: 'not-a-language', grammar: 'tree-sitter-not-here.wasm', vendored: false };
   assert.equal(await newParser(missing), null);
+  assert.deepEqual(lostParserLanguages(), []);
+});
+
+/**
+ * The case that was actually breaking shell scripts.
+ *
+ * The bash grammar tree-sitter-wasms ships fails on any `case ... in`: its
+ * scanner calls a function the runtime does not export, and the runtime aborts
+ * after it. Almost every real script has one, so a scan of a repository's
+ * scripts lost nearly all of them -- and every earlier probe used a function
+ * with no `case`, which parsed fine and hid it.
+ */
+test('a bash script with a case statement keeps its declarations', async () => {
+  const script = [
+    '#!/usr/bin/env bash',
+    'main() {',
+    '  local command="${1:-}"',
+    '  case "$command" in',
+    '    start) run_start ;;',
+    '    *) echo "unknown" >&2; return 1 ;;',
+    '  esac',
+    '}',
+    'run_start() {',
+    '  echo starting',
+    '}',
+  ].join('\n');
+
+  // Several in a row: the broken grammar poisoned its runtime, so the second
+  // file failed even when the first had been recovered from.
+  for (let i = 0; i < 3; i++) {
+    const found = await declarations(`script-${i}.sh`, script);
+    assert.deepEqual(found.map((item) => item.name).sort(), ['main', 'run_start']);
+  }
   assert.deepEqual(lostParserLanguages(), []);
 });
