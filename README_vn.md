@@ -362,6 +362,7 @@ ký ức semantic thì không. Phân rã là hạ hạng, không phải xoá.
 | `MEMORY_LAYER_OUTPUT_BUDGET` | Trần byte cho output tool MCP (mặc định 24000) |
 | `MEMORY_LAYER_AUTO_RECORD` | `1` để hook tự ghi lệnh thất bại |
 | `MEMORY_LAYER_LOG_LEVEL` | `debug` / `info` / `warn` / `error` |
+| `MEMORY_LAYER_GRAMMAR_RECYCLE` | Số parser một runtime ngữ pháp được cấp trước khi bị thay (mặc định 120). Giảm xuống nếu lần quét lớn báo một ngôn ngữ mất parser |
 
 ## Giấy phép
 

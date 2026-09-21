@@ -28,6 +28,7 @@ export {
 } from './ingest/ingest.js';
 export {
   ruleForFile, KNOWN_LANGUAGES, probeAstChunking, isLanguageAvailable, relationLanguages,
+  newParser, lostParserLanguages, resetGrammarState, grammarLoadCounts,
   type AstCapability,
 } from './ingest/languages.js';
 

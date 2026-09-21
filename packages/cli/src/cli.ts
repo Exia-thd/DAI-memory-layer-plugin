@@ -70,6 +70,26 @@ function chooseScan(args: Args): string[] {
  * that read like success. Skipping is a fine decision; skipping quietly is how
  * a store ends up trusted and incomplete at the same time.
  */
+/**
+ * Languages that stopped being parsable part-way through a scan.
+ *
+ * Their files are in the store, chunked by character windows, with no
+ * declarations read -- so the code graph has a hole exactly the shape of one
+ * language. This is printed with the result because the alternative, which is
+ * what happened, is four hundred warnings in a log file under a line that says
+ * the scan succeeded.
+ */
+function formatLostParsers(lost: Array<{ language: string; files: number; reason: string }>): string {
+  if (lost.length === 0) return '';
+  const lines = ['', `${lost.length} language(s) lost their parser during this scan:`];
+  for (const entry of lost) {
+    lines.push(`   ${entry.language}: ${entry.files} file(s) indexed without declarations -- ${entry.reason}`);
+  }
+  lines.push('   their files are searchable, but nothing in them is a declaration in the code graph');
+  lines.push('   re-run `dai-memory ingest --force` for those files, or set MEMORY_LAYER_GRAMMAR_RECYCLE lower');
+  return lines.join('\n');
+}
+
 function formatIgnored(ignored: IgnoredFile[], verbose: boolean): string {
   if (ignored.length === 0) return '';
 
@@ -379,7 +399,8 @@ async function main(argv: string[]): Promise<number> {
       if (scanned) {
         process.stdout.write(
           `
-${scanned.created} memories, ${scanned.symbols} declarations from ${scanned.files} files\n`,
+${scanned.created} memories, ${scanned.symbols} declarations from ${scanned.files} files\n`
+          + (scanned.lostParsers.length > 0 ? `${formatLostParsers(scanned.lostParsers)}\n` : ''),
         );
         if (page) process.stdout.write(`open ${page}\n`);
       }
@@ -441,6 +462,7 @@ reclaimed ${report.vanished} file(s) no longer on disk` : '') +
             '\n   worth a decision? dai-memory write --layer semantic --source-ref <ref> ...'
           : '') +
         formatIgnored(report.ignored, Boolean(args.flags.verbose)) +
+        formatLostParsers(report.lostParsers) +
         (report.redactions.length > 0
           ? `\nredacted: ${report.redactions.map((r) => `${r.rule} x${r.count}`).join(', ')}`
           : ''),

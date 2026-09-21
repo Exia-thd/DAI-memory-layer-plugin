@@ -52,25 +52,31 @@ test('R6-a: listing many projects keeps a small cost per project', () => {
     const entries = Array.from({ length: 50 }, (_, i) => fakeProject(root, `project-${i}`));
     const registry = path.join(repo.home, 'registry.json');
 
-    // Two runs per size, and the faster counts: this is wall clock around a
-    // process that spawns git once per project, so anything else on the machine
-    // is added to the number, and the minimum is the sample least polluted by
-    // it.
-    const time = (count) => {
-      fs.writeFileSync(registry, JSON.stringify(entries.slice(0, count)));
-      let best = Infinity;
-      let listed;
-      for (let run = 0; run < 2; run++) {
+    // Interleaved rounds, and the fastest sample of each size counts.
+    //
+    // This is wall clock around a process that spawns git once per project, so
+    // anything else on the machine is added to the number. Measuring each size
+    // in its own block let load that changed between blocks masquerade as a
+    // result: one run measured 25 projects at 7.9s and 50 at 4.6s, because a
+    // build finished in between. Taking every size once per round spreads a
+    // load change across all three, and the minimum of each is the sample least
+    // polluted by whatever else was running.
+    const sizes = [1, 25, 50];
+    const best = new Map(sizes.map((size) => [size, Infinity]));
+    let listed;
+    for (let round = 0; round < 3; round++) {
+      for (const size of sizes) {
+        fs.writeFileSync(registry, JSON.stringify(entries.slice(0, size)));
         const started = Date.now();
-        listed = JSON.parse(cli(repo, ['list', '--json']));
-        best = Math.min(best, Date.now() - started);
+        const result = JSON.parse(cli(repo, ['list', '--json']));
+        best.set(size, Math.min(best.get(size), Date.now() - started));
+        if (size === 50) listed = result;
       }
-      return { elapsed: best, listed };
-    };
+    }
 
-    const one = time(1);
-    const twentyFive = time(25);
-    const fifty = time(50);
+    const one = { elapsed: best.get(1) };
+    const twentyFive = { elapsed: best.get(25) };
+    const fifty = { elapsed: best.get(50), listed };
 
     assert.equal(fifty.listed.length, 50);
     assert.ok(fifty.listed.every((entry) => entry.freshness), 'freshness was not reported per project');

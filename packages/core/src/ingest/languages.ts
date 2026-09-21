@@ -765,6 +765,65 @@ const grammars = new Map<string, Promise<LoadedGrammar | null>>();
 /** Set once web-tree-sitter has failed; every later load returns null quietly. */
 let runtimeFailure: string | null = null;
 
+/**
+ * How many parsers a grammar's runtime may hand out before it is thrown away.
+ *
+ * Each grammar gets a runtime of its own -- a whole WebAssembly instance -- and
+ * they were never released, so a long scan ended with one live heap per
+ * language in the repository. On a repository of three thousand files that ran
+ * out: `new Parser()` aborted, and because the failed runtime stayed cached,
+ * every later file of that language failed the same way. Four hundred shell
+ * scripts lost their declarations to it, with nothing on stdout to say so.
+ *
+ * Recycling bounds it: past this many parsers the cached runtime is dropped and
+ * the next call loads the grammar into a new one. The number is a budget, not a
+ * measurement -- high enough that a normal file costs nothing, low enough that
+ * no runtime lives long enough to fill up.
+ */
+const RECYCLE_AFTER = Math.max(
+  1,
+  Number.parseInt(process.env.MEMORY_LAYER_GRAMMAR_RECYCLE ?? '', 10) || 120,
+);
+
+const parsersHandedOut = new Map<string, number>();
+
+/**
+ * How many times each grammar has been loaded into a runtime of its own.
+ *
+ * Exported because the recycle is otherwise invisible: a test that only checks
+ * that parsing still works passes just as well when nothing is ever recycled,
+ * which is the bug. This counts the thing the fix actually changes.
+ */
+const grammarLoads = new Map<string, number>();
+
+export function grammarLoadCounts(): Record<string, number> {
+  return Object.fromEntries(grammarLoads);
+}
+
+/** Languages whose parser stopped being constructible part-way through a run. */
+const lostParsers = new Map<string, { failures: number; reason: string }>();
+
+/**
+ * Which languages lost their parser during this process, and how often.
+ *
+ * Callers report this with their result. A scan that quietly drops every file
+ * of one language is the failure this package exists to avoid, and a warning
+ * in a log file nobody opens is not reporting it.
+ */
+export function lostParserLanguages(): Array<{ language: string; failures: number; reason: string }> {
+  return [...lostParsers].map(([language, state]) => ({ language, ...state }))
+    .sort((a, b) => b.failures - a.failures || a.language.localeCompare(b.language));
+}
+
+/** Test seam: forget what this process has learned about grammars. */
+export function resetGrammarState(): void {
+  grammars.clear();
+  parsersHandedOut.clear();
+  lostParsers.clear();
+  grammarLoads.clear();
+  runtimeFailure = null;
+}
+
 function grammarDir(): string | null {
   try {
     return `${path.dirname(require.resolve('tree-sitter-wasms/package.json'))}/out`;
@@ -894,6 +953,7 @@ function loadGrammar(rule: LanguageRule): Promise<LoadedGrammar | null> {
 }
 
 async function loadGrammarUncached(rule: LanguageRule, grammar: string): Promise<LoadedGrammar | null> {
+  grammarLoads.set(rule.label, (grammarLoads.get(rule.label) ?? 0) + 1);
   // dist/ingest/languages.js -> <package>/grammars
   const dir = rule.vendored ? fileURLToPath(new URL('../../grammars', import.meta.url)) : grammarDir();
   if (!dir) {
@@ -929,10 +989,40 @@ export async function newParser(rule: LanguageRule): Promise<TreeSitterParser | 
   if (!loaded) return null;
 
   try {
+    // A seam, like MEMORY_LAYER_DISABLE_AST: the interesting failure is a
+    // runtime that has run out of memory, and there is no way to ask a healthy
+    // one to do that. Naming a language here makes its next parser throw, so
+    // the recovery path -- drop the dead runtime, record which language stopped
+    // being read -- is exercised rather than assumed.
+    if (process.env.MEMORY_LAYER_FAIL_PARSER === rule.label) {
+      throw new Error('Aborted(). (fault injection via MEMORY_LAYER_FAIL_PARSER)');
+    }
     const parser = new loaded.Parser();
     parser.setLanguage(loaded.language);
+
+    // Count what this runtime has produced, and retire it once it has done
+    // enough. Dropping the cache entry is the whole retirement: the parsers and
+    // trees are deleted by their callers, so nothing else holds the module and
+    // it can be collected.
+    const handedOut = (parsersHandedOut.get(rule.label) ?? 0) + 1;
+    if (handedOut >= RECYCLE_AFTER) {
+      grammars.delete(rule.label);
+      parsersHandedOut.delete(rule.label);
+    } else {
+      parsersHandedOut.set(rule.label, handedOut);
+    }
     return parser;
   } catch (err) {
+    // A runtime that cannot make a parser will not make the next one either.
+    // Drop it so the language gets a fresh one, and record the loss so the
+    // command can say which language it stopped indexing.
+    grammars.delete(rule.label);
+    parsersHandedOut.delete(rule.label);
+    const previous = lostParsers.get(rule.label);
+    lostParsers.set(rule.label, {
+      failures: (previous?.failures ?? 0) + 1,
+      reason: err instanceof Error ? err.message : String(err),
+    });
     log('warn', `failed to construct parser for ${rule.label}`, err);
     return null;
   }

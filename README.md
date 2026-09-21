@@ -369,6 +369,7 @@ semantic ones do not. Decay demotes; it does not remove.
 | `MEMORY_LAYER_OUTPUT_BUDGET` | Byte cap on MCP tool output (default 24000) |
 | `MEMORY_LAYER_AUTO_RECORD` | `1` to let hooks record failed commands |
 | `MEMORY_LAYER_LOG_LEVEL` | `debug` / `info` / `warn` / `error` |
+| `MEMORY_LAYER_GRAMMAR_RECYCLE` | Parsers a grammar's runtime hands out before it is replaced (default 120). Lower it if a large scan reports a language that lost its parser |
 
 ## Licence
 

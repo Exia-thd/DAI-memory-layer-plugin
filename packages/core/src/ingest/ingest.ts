@@ -6,7 +6,7 @@ import type { Layer, MemoryNode } from '../types.js';
 import type { EmbeddingProvider } from '../embed/index.js';
 import { chunk, declarations, CHUNKER_VERSION } from './chunker.js';
 import { relationsIn } from './relations.js';
-import { ruleForFile } from './languages.js';
+import { ruleForFile, lostParserLanguages } from './languages.js';
 import {
   writeRelations, resolvePending, repoIndex, emptyRelationReport, type RelationReport,
 } from './resolve.js';
@@ -44,6 +44,15 @@ export interface IngestReport {
   symbolsRemoved: number;
   /** Files the walk passed over, with the reason. Never silent. */
   ignored: IgnoredFile[];
+  /**
+   * Languages whose parser stopped being constructible part-way through this
+   * run -- the runtime ran out of memory, and every later file of that
+   * language was chunked by character windows with no declarations read.
+   *
+   * In the result rather than only in the log: an index missing one language
+   * entirely looks exactly like an index that is fine.
+   */
+  lostParsers: Array<{ language: string; files: number; reason: string }>;
   /** Files that produced far more chunks than their size suggests. */
   dense: { path: string; chunks: number; kb: number }[];
   /** Chunks that read like a decision somebody already reasoned through. */
@@ -346,7 +355,7 @@ export async function ingest(
   const report: IngestReport = {
     files: 0, skipped: 0, created: 0, refreshed: 0, embedded: 0, symbols: 0,
     removed: 0, superseded: 0, vanished: 0, symbolsRemoved: 0,
-    ignored: [], dense: [], candidates: [], redactions: [], relations: emptyRelationReport(),
+    ignored: [], lostParsers: [], dense: [], candidates: [], redactions: [], relations: emptyRelationReport(),
   };
   const redactionTotals = new Map<string, number>();
   const meta = store.getMeta();
@@ -611,6 +620,15 @@ export async function ingest(
   }
 
   report.redactions = [...redactionTotals.entries()].map(([rule, count]) => ({ rule, count }));
+  // A language whose parser died mid-run took every later file of its kind
+  // down with it, quietly, into character chunks. Carry that out with the
+  // result: the caller decides how loudly to say it, but it can no longer be
+  // missed by anyone who did not open the log.
+  report.lostParsers = lostParserLanguages().map(({ language, failures, reason }) => ({
+    language,
+    files: failures,
+    reason,
+  }));
   return report;
 }
 
