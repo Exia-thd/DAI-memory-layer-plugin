@@ -41,6 +41,14 @@ Asking from either end reaches the other.
 
 Requires Node 20.11+ and a git repository.
 
+If you install by hand rather than through the marketplace, run `pnpm install`
+from the repository root — not from a package directory. pnpm blocks install
+scripts it has not been told to allow, and four of these dependencies need
+theirs; the permission is recorded in `pnpm-workspace.yaml`, which pnpm only
+reads at the root. Installing from a subdirectory skips it, and
+`@ladybugdb/core` then never puts its platform binary in place, so every
+command fails with `lbugjs.node: cannot open shared object file`.
+
 ### As a Claude Code plugin
 
 ```

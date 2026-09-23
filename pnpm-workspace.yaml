@@ -1,2 +1,22 @@
 packages:
   - 'packages/*'
+
+# Dependencies allowed to run their install scripts.
+#
+# Four of them need to, and one of them is not optional: @ladybugdb/core ships
+# a binary per platform as an optional dependency and copies the right one into
+# place in a postinstall script. Skip it and every command dies with
+# `lbugjs.node: cannot open shared object file`, which reads as a broken build
+# rather than a skipped script.
+#
+# This is duplicated in package.json under `pnpm.onlyBuiltDependencies` and the
+# duplication is deliberate: pnpm 9 reads it there and pnpm 10 reads it here.
+# pnpm 10 warns that it ignored the package.json field, which is expected and
+# harmless -- and much less confusing than the alternative, which is pnpm 10
+# refusing the install with ERR_PNPM_IGNORED_BUILDS while the exceptions sit in
+# a file it no longer looks at.
+onlyBuiltDependencies:
+  - '@ladybugdb/core'
+  - onnxruntime-node
+  - protobufjs
+  - sharp
