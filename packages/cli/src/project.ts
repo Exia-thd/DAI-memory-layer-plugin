@@ -19,13 +19,22 @@ export interface ProjectInfo {
  *
  * A subprocess whose result is never inspected is how an index ends up with one
  * node and no edges while every command reports success.
+ *
+ * The buffer is sized for the output, not for the default. `execFileSync` gives
+ * a child 1 MB and throws ENOBUFS past it, which lands in the same `catch` as a
+ * bad ref -- so a large diff was reported as "could not read changes from git",
+ * and a branch that changed a few hundred files could not be reviewed at all.
+ * A `git diff --unified=0` of 287 files is already 3.4 MB.
  */
+const GIT_OUTPUT_LIMIT = 512 * 1024 * 1024;
+
 function git(args: string[], cwd: string): string | null {
   try {
     return execFileSync('git', args, {
       cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      maxBuffer: GIT_OUTPUT_LIMIT,
     }).trim();
   } catch {
     return null;
@@ -117,7 +126,7 @@ const execFileAsync = promisify(execFile);
  */
 async function gitAsync(args: string[], cwd: string): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync('git', args, { cwd, encoding: 'utf8' });
+    const { stdout } = await execFileAsync('git', args, { cwd, encoding: 'utf8', maxBuffer: GIT_OUTPUT_LIMIT });
     return stdout.trim();
   } catch {
     return null;

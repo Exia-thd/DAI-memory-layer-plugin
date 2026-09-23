@@ -76,7 +76,8 @@ const write = (relative, content) => {
   fs.mkdirSync(path.dirname(full), { recursive: true });
   fs.writeFileSync(full, content);
 };
-const git = (...args) => execFileSync('git', args, { cwd: repo.dir, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+// maxBuffer: one test writes a diff past the 1 MB default on purpose.
+const git = (...args) => execFileSync('git', args, { cwd: repo.dir, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 512 * 1024 * 1024 }).toString();
 const json = (args) => JSON.parse(cli(repo, [...args, '--json']));
 
 before(() => {
@@ -215,4 +216,38 @@ test('the text forms read the way the JSON does', () => {
   assert.match(text, /REMOVED helper/);
   assert.match(text, /risk: (LOW|MEDIUM|HIGH|CRITICAL) --/);
   assert.match(cli(repo, ['review', '--base', 'HEAD~1']), /who has worked here:/);
+});
+
+/**
+ * A diff bigger than a child process's default output buffer.
+ *
+ * `execFileSync` gives a child 1 MB and throws ENOBUFS past it, in the same
+ * `catch` that a bad ref lands in -- so git reading 3 MB of diff was reported
+ * as "could not read changes from git", and a branch touching a few hundred
+ * files could not be reviewed at all. Real ones get there easily: 287 changed
+ * files in this project's own harness produced 3.4 MB.
+ */
+test('a diff larger than a process output buffer is read, not reported as unreadable', () => {
+  // ~1.5 MB of added lines beside the real edit, so the diff passes the 1 MB
+  // default while the edit itself stays small enough to read as declarations.
+  const bulk = Array.from({ length: 30000 }, (_, i) => `// padding ${i} ${'x'.repeat(40)}`).join('\n');
+  write('docs/bulk-notes.md', bulk);
+  write('src/auth/validate.ts', [
+    'export function validateUser(user) {',
+    '  return checkPassword(user.password);',
+    '}',
+    'export function checkPassword(password) {',
+    '  return password.length > 3;',
+    '}',
+  ].join('\n'));
+  git('add', '-A');
+  const diffBytes = git('diff', '--cached', '--unified=0').length;
+  assert.ok(diffBytes > 1024 * 1024, `fixture diff is only ${diffBytes} bytes`);
+
+  const result = json(['detect-changes', '--scope', 'staged']);
+  assert.equal(result.status, 'ok');
+  assert.ok(
+    result.symbols.some((symbol) => symbol.qualified === 'checkPassword'),
+    JSON.stringify(result.symbols.map((symbol) => symbol.qualified)),
+  );
 });
