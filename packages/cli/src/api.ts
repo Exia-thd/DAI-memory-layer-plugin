@@ -3,7 +3,7 @@ import nodePath from 'node:path';
 import {
   MemoryStore, StoreLockedError, ingest, search, neighbors, clusters, conflicts, doctor,
   probeCapabilities, selectProvider, expectedIdentity, parseDimensions, upsertProject, journal,
-  readMeta, samePath, globalDir, PLUGIN_DIR_NAME, TOKENIZER_VERSION,
+  readMeta, updateMeta, samePath, globalDir, PLUGIN_DIR_NAME, TOKENIZER_VERSION,
   type StoreMeta,
   nodeId, redact, type EmbeddingProvider, type Layer, type EdgeType, type MemoryNode,
   type SearchResult, type Subgraph, type Conflict, type Cluster, type DoctorReport,
@@ -296,7 +296,23 @@ export async function runIngest(
       maxFileBytes: options.maxFileBytes,
       embedder: provider,
     });
-    const meta = store.getMeta();
+    // A full scan read every file the working tree has, so the graph is this
+    // commit's and the store says so. Before this, ingest wrote back whatever
+    // commit `init` had recorded: `status` then reported "the working tree has
+    // moved on" for ever, every session re-ingested on that word, and anything
+    // reading meta.json for freshness -- the harness's docs hub among them --
+    // was told a current index was stale.
+    //
+    // A scan of named paths is not the whole tree, so it leaves the commit
+    // alone: claiming this one would call a partial index current.
+    const project = resolveProject(options.from);
+    // The whole tree is either nothing named or the root itself: the CLI sends
+    // `['.']` for the daily `dai-memory ingest`.
+    const wholeTree = targets.length === 0
+      || targets.every((target) => samePath(nodePath.resolve(project.root, target), project.root));
+    const meta = wholeTree
+      ? updateMeta(store.dir, { lastCommit: project.lastCommit, branch: project.branch })
+      : store.getMeta();
     upsertProject({
       name: meta.projectName,
       path: meta.projectRoot,
