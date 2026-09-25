@@ -9,14 +9,25 @@ packages:
 # `lbugjs.node: cannot open shared object file`, which reads as a broken build
 # rather than a skipped script.
 #
-# This is duplicated in package.json under `pnpm.onlyBuiltDependencies` and the
-# duplication is deliberate: pnpm 9 reads it there and pnpm 10 reads it here.
-# pnpm 10 warns that it ignored the package.json field, which is expected and
-# harmless -- and much less confusing than the alternative, which is pnpm 10
-# refusing the install with ERR_PNPM_IGNORED_BUILDS while the exceptions sit in
-# a file it no longer looks at.
+# The same four exceptions are declared three times, once per pnpm generation,
+# because each one reads a different place and ignores the others:
+#
+#   pnpm 9   package.json, `pnpm.onlyBuiltDependencies`
+#   pnpm 10  this file, `onlyBuiltDependencies`
+#   pnpm 12  this file, `allowBuilds`
+#
+# pnpm 12 still *reports* onlyBuiltDependencies through `pnpm config get`, but
+# builds nothing from it: a fresh install exits with ERR_PNPM_IGNORED_BUILDS
+# naming these four, and anyone who ignores that error has a store whose native
+# module cannot load. Each key is harmless to the generations that do not read
+# it, so all three stay until the oldest is no longer used anywhere.
 onlyBuiltDependencies:
   - '@ladybugdb/core'
   - onnxruntime-node
   - protobufjs
   - sharp
+allowBuilds:
+  '@ladybugdb/core': true
+  onnxruntime-node: true
+  protobufjs: true
+  sharp: true
