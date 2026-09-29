@@ -3,6 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema, ListToolsRequestSchema,
   ListResourcesRequestSchema, ReadResourceRequestSchema,
+  ListPromptsRequestSchema, GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { LAYERS, EDGE_TYPES, ddl, readMeta, type Layer, type EdgeType, log } from '@memory-layer/core';
 import * as api from './api.js';
@@ -16,12 +17,12 @@ import { isStale, storeDirOrThrow } from './project.js';
  * failure looks like the server being broken rather than noisy.
  */
 
-const TOOLS = [
+export const TOOLS = [
   {
     name: 'dai_memory_search',
     description:
-      'Search project memory for decisions, errors, constraints and past sessions. ' +
-      'Returns ranked results plus a fusion report saying which retrieval branches contributed.',
+      'Use to find what memory records about a question. Ranked, with a report of which ' +
+      'retrieval branches contributed.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -39,9 +40,8 @@ const TOOLS = [
   {
     name: 'dai_memory_why',
     description:
-      'Why is this code the way it is? Returns the decisions and constraints touching a ' +
-      'file path or symbol, with the errors they were made in response to. ' +
-      'Use before changing code you did not write.',
+      'Use before changing code you did not write: the decisions and constraints touching a ' +
+      'file or symbol, and the errors they answered.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -53,7 +53,7 @@ const TOOLS = [
   },
   {
     name: 'dai_memory_get',
-    description: 'Fetch one memory node in full, with its direct edges.',
+    description: 'Use to read one memory node in full, with its direct edges.',
     inputSchema: {
       type: 'object',
       properties: { id: { type: 'string' } },
@@ -63,8 +63,8 @@ const TOOLS = [
   {
     name: 'dai_memory_neighbors',
     description:
-      'Walk the memory graph out from a node. Traversal is bidirectional, so asking from ' +
-      'an error reaches the decision that resolved it.',
+      'Use to walk out from one memory node. Traversal is bidirectional, so asking from an ' +
+      'error reaches the decision that resolved it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -78,10 +78,8 @@ const TOOLS = [
   {
     name: 'dai_memory_write',
     description:
-      'Record a decision, error, constraint or procedure. Always include the reason it was ' +
-      'chosen over the alternative -- a decision without its reason cannot be re-evaluated later. ' +
-      'A source_ref with a line span is anchored to the declarations it covers automatically, and ' +
-      'the reply names any existing memories close enough to be worth linking.',
+      'Use when a decision, error, constraint or procedure should outlive the session. Include ' +
+      'why it was chosen over the alternative; the reply names memories worth linking.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -112,7 +110,7 @@ const TOOLS = [
   },
   {
     name: 'dai_memory_link',
-    description: 'Link two memory nodes with a typed relationship.',
+    description: 'Use to connect two memory nodes with a typed relationship.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -126,9 +124,7 @@ const TOOLS = [
   },
   {
     name: 'dai_memory_constraints',
-    description:
-      'The decisions and constraints currently in force for this project, most important ' +
-      'first. Use at the start of a task to learn what the project has already settled.',
+    description: 'Use at the start of a task: what this project has already settled, most important first.',
     inputSchema: {
       type: 'object',
       properties: { limit: { type: 'number' } },
@@ -137,12 +133,8 @@ const TOOLS = [
   {
     name: 'dai_memory_map',
     description:
-      'The code graph: which files declare what, what each declaration calls and is ' +
-      'called by, what it inherits, which files import which, and which memory is about ' +
-      'each declaration. Use to get oriented in an unfamiliar area before reading files ' +
-      'one by one, and to see what reaches a declaration before changing it. Pass a path ' +
-      'prefix to narrow it -- edges leaving the prefix are counted so a narrowed view is ' +
-      'not mistaken for an isolated one.',
+      'Use to get oriented in unfamiliar code: files, declarations, calls, inheritance, imports ' +
+      'and the memory about each. Narrow it with a path prefix.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -154,12 +146,8 @@ const TOOLS = [
   {
     name: 'dai_memory_impact',
     description:
-      'What breaks if a declaration changes. Upstream lists its dependents (callers, derived ' +
-      'types, callers of its members) by distance: d=1 WILL BREAK, d=2 LIKELY AFFECTED, d=3 MAY ' +
-      'NEED TESTING, each with the confidence of the edge that reached it, plus the files that ' +
-      'import it and a risk level with its reasons. Downstream lists what it depends on. Run it ' +
-      'before editing a function, class or method. A name that fits several declarations comes ' +
-      'back as ranked candidates to choose from with `uid`.',
+      'Use before editing a function, class or method: what breaks, by distance, with edge ' +
+      'confidence and a risk level. An ambiguous name returns candidates to pick with uid.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -176,9 +164,8 @@ const TOOLS = [
   {
     name: 'dai_memory_context',
     description:
-      'Everything around one declaration: what encloses it, its members, who calls it, what it ' +
-      'calls, the types it derives from and those derived from it, its file\'s imports and ' +
-      'importers, and the memory recorded about it.',
+      'Use for one declaration in full: what encloses it, its members, callers, callees, types ' +
+      'either way, its file imports and importers, and the memory about it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -191,9 +178,8 @@ const TOOLS = [
   {
     name: 'dai_memory_trace',
     description:
-      'How one declaration reaches another: the shortest path over calls, entering types through ' +
-      'their members. With no path, says where the chain breaks and whether the depth limit cut ' +
-      'the search short.',
+      'Use to see how one declaration reaches another: the shortest path over calls. With no ' +
+      'path it says where the chain breaks.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -211,9 +197,8 @@ const TOOLS = [
   {
     name: 'dai_memory_query',
     description:
-      'Ask the code graph in words and get back the execution flows the answer runs in, rather ' +
-      'than a list of files. Declarations that match but belong to no flow come back in their own ' +
-      'group, so unreachable code is visible rather than dropped.',
+      'Use to ask the code graph in words and get the execution flows an answer runs in rather ' +
+      'than a list of files.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -227,9 +212,8 @@ const TOOLS = [
   {
     name: 'dai_memory_processes',
     description:
-      'Every execution flow in this repository: an entry point -- a declaration nothing here calls, ' +
-      'which calls others -- and what it reaches. Use it to learn what a codebase does before ' +
-      'changing it. The rule that found the entry points is reported with the answer.',
+      'Use to learn what a codebase does before changing it: every execution flow, from its ' +
+      'entry point.',
     inputSchema: {
       type: 'object',
       properties: { limit: { type: 'number' }, includeTests: { type: 'boolean' } },
@@ -238,9 +222,8 @@ const TOOLS = [
   {
     name: 'dai_memory_process',
     description:
-      'One execution flow, step by step, with each step\'s distance from the entry point and the ' +
-      'confidence of the call that reached it. A name that fits several flows is answered with all ' +
-      'of them rather than a guess.',
+      'Use for one execution flow step by step, with each step distance from the entry point ' +
+      'and the confidence of the call that reached it.',
     inputSchema: {
       type: 'object',
       properties: { name: { type: 'string' }, includeTests: { type: 'boolean' } },
@@ -250,10 +233,8 @@ const TOOLS = [
   {
     name: 'dai_memory_detect_changes',
     description:
-      'What the current diff changes, in declarations rather than lines: which indexed declarations '
-      + 'the hunks touched, what depends on each, which execution flows run through them, and the risk. '
-      + 'Run it before committing. Hunks that match no indexed declaration are counted and reported, '
-      + 'and a stale graph is declared rather than silently trusted.',
+      'Use before committing: what the current diff changes in declarations rather than lines, ' +
+      'what depends on them, the flows through them, and the risk.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -267,9 +248,8 @@ const TOOLS = [
   {
     name: 'dai_memory_review',
     description:
-      'This branch as a reviewer wants it: what can break code outside the file it was changed in, '
-      + 'which modules it lands in, and who has committed to those files before. The last of those is '
-      + 'history, not a recommendation, and the answer says so.',
+      'Use to read a branch as a reviewer wants it: what can break outside the files changed, ' +
+      'which modules it lands in, and who has worked there before.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -282,11 +262,8 @@ const TOOLS = [
   {
     name: 'dai_memory_rename',
     description:
-      'Rename a declaration through the call graph: the declaration, the calls resolved to it, and '
-      + 'the types deriving from it, each with the confidence of the edge that found it. Other '
-      + 'occurrences of the word -- comments, strings, a different declaration with the same name -- '
-      + 'are reported separately and never rewritten unless asked. Shows a plan; apply must be asked '
-      + 'for. Refuses when the graph is older than the working tree, and when the name is ambiguous.',
+      'Use to rename a declaration through the call graph. Shows a plan; apply must be asked ' +
+      'for. Refuses an ambiguous name, or a graph older than the working tree.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -304,11 +281,8 @@ const TOOLS = [
   {
     name: 'dai_memory_wiki',
     description:
-      'Documentation built from the code graph, the recorded memory and the source text: an overview, '
-      + 'the execution flows, the HTTP surface, the areas of the code, the recorded decisions copied '
-      + 'verbatim, and what the checks say. No language model is called and none is configured, so '
-      + 'every sentence is derived; each page says so. With check, it compares what is on disk with '
-      + 'what would be generated and writes nothing.',
+      'Use to build documentation from the code graph, the recorded memory and the source. No ' +
+      'model is called. With check it reports drift and writes nothing.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -321,18 +295,15 @@ const TOOLS = [
   {
     name: 'dai_memory_groups',
     description:
-      'The groups of repositories defined on this machine, each a list of projects that make up one '
-      + 'system. A group holds locations only: every answer about it is computed from the members\' '
-      + 'own stores when it is asked.',
+      'Use to list the repository groups on this machine, each the projects that make up one ' +
+      'system.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'dai_memory_contracts',
     description:
-      'Which repository in a group answers which HTTP call: outbound calls found in one member '
-      + 'matched to routes found in another, on method and path with placeholders collapsed. Calls '
-      + 'nothing in the group answers are listed rather than dropped, and a member with no store is '
-      + 'named rather than silently left out. Nothing here checks request or response bodies.',
+      'Use to see which repository in a group answers which HTTP call, and which calls nothing ' +
+      'in the group answers.',
     inputSchema: {
       type: 'object',
       properties: { group: { type: 'string' }, includeTests: { type: 'boolean' } },
@@ -342,11 +313,8 @@ const TOOLS = [
   {
     name: 'dai_memory_taint',
     description:
-      'Where untrusted input could reach something dangerous: sources (request data, argv, the '
-      + 'environment, stdin) joined to sinks (a shell, eval, SQL, HTML, the filesystem) through the '
-      + 'call graph. This matches patterns and follows calls; it does not track values, so a finding '
-      + 'is a place worth reading, not a vulnerability. A sanitizer on the path halves the confidence '
-      + 'and marks the finding mitigated rather than hiding it.',
+      'Use to find where untrusted input could reach something dangerous, through the call ' +
+      'graph. The reply states what the analysis cannot do.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -358,9 +326,8 @@ const TOOLS = [
   {
     name: 'dai_memory_explain',
     description:
-      'What the taint analysis says about one declaration or file: the findings it is the source of, '
-      + 'the sink of, or on the path of. Nothing found is reported as nothing found, which is not the '
-      + 'same as safe.',
+      'Use for what the taint analysis says about one declaration or file: the findings it is ' +
+      'the source of, the sink of, or on the path of.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -375,9 +342,8 @@ const TOOLS = [
   {
     name: 'dai_memory_pdg',
     description:
-      'The inside of one declaration, from its syntax tree: every name, the lines that give it a '
-      + 'value, the lines that read it, and which lines run only under a condition. No aliasing, no '
-      + 'fields, nothing across a call -- and the answer says so.',
+      'Use to look inside one declaration: every name, the lines that set it, the lines that ' +
+      'read it, and which lines run only under a condition.',
     inputSchema: {
       type: 'object',
       properties: { target: { type: 'string' }, uid: { type: 'string' }, file: { type: 'string' } },
@@ -385,26 +351,21 @@ const TOOLS = [
   },
   {
     name: 'dai_memory_routes',
-    description:
-      'The HTTP routes this repository declares and the declaration each sits in, read per framework '
-      + 'from the source text. A path built at runtime is reported with no path rather than guessed, '
-      + 'and the answer lists which frameworks were looked for -- no routes found is not the same as '
-      + 'a service having none.',
+    description: 'Use to list the HTTP routes this repository declares and the declaration each sits in.',
     inputSchema: { type: 'object', properties: { includeTests: { type: 'boolean' } } },
   },
   {
     name: 'dai_memory_shape_check',
     description:
-      'What is wrong with the routes themselves: the same method and path declared twice, a path '
-      + 'parameter the handler never mentions, a route with no indexed handler. Each is a question '
-      + 'for a person, not a verdict.',
+      'Use to find what is wrong with the routes themselves: a path declared twice, a path ' +
+      'parameter no handler mentions, a route with no indexed handler.',
     inputSchema: { type: 'object', properties: { includeTests: { type: 'boolean' } } },
   },
   {
     name: 'dai_memory_api_impact',
     description:
-      'Which endpoints answer through a declaration: the routes whose handlers reach it, with how '
-      + 'many calls away each is. Use it before changing something a service exposes.',
+      'Use before changing something a service exposes: which endpoints answer through a ' +
+      'declaration, and how many calls away each is.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -419,23 +380,22 @@ const TOOLS = [
   {
     name: 'dai_memory_tool_map',
     description:
-      'The MCP tools this repository declares, where each is defined and how it was recognised.',
+      'Use to list the MCP tools this repository declares, where each is defined and how it was ' +
+      'recognised.',
     inputSchema: { type: 'object', properties: { includeTests: { type: 'boolean' } } },
   },
   {
     name: 'dai_memory_check',
     description:
-      'Invariants over the code graph: import cycles, declarations that take part in nothing, files '
-      + 'that declare nothing indexed. Each finding says what it means and each rule reports what it '
-      + 'examined, so an empty result can be told apart from a rule that looked at nothing.',
+      'Use to run invariants over the code graph: import cycles, declarations that take part in ' +
+      'nothing, files that declare nothing indexed.',
     inputSchema: { type: 'object', properties: { includeTests: { type: 'boolean' }, examples: { type: 'number' } } },
   },
   {
     name: 'dai_memory_code_clusters',
     description:
-      'Communities in the call graph: the parts of the codebase that talk to each other more than to '
-      + 'the rest, named after the directory most of each lives in. Use it to learn the shape of an '
-      + 'unfamiliar repository. This is the code graph, not the memory graph -- dai_memory_clusters is that one.',
+      'Use to learn the shape of an unfamiliar repository: communities in the call graph. For ' +
+      'the memory graph use dai_memory_clusters.',
     inputSchema: {
       type: 'object',
       properties: { minSize: { type: 'number' }, limit: { type: 'number' }, includeTests: { type: 'boolean' } },
@@ -444,9 +404,8 @@ const TOOLS = [
   {
     name: 'dai_memory_cypher',
     description:
-      'One read-only Cypher query against the store, for a question no other tool answers. Writing '
-      + 'clauses (CREATE, MERGE, SET, DELETE, DROP, CALL and the rest) are refused, several statements '
-      + 'in one query are refused, and a query without LIMIT is given one.',
+      'Use for a question no other tool answers: one read-only Cypher query against the store. ' +
+      'Write clauses and several statements at once are refused.',
     inputSchema: {
       type: 'object',
       properties: { query: { type: 'string' }, limit: { type: 'number' } },
@@ -456,24 +415,22 @@ const TOOLS = [
   {
     name: 'dai_memory_status',
     description:
-      'What is indexed here: the project, the commit the graph was built from, whether the working '
-      + 'tree has moved on since, the store schema and embedding, and the size of the graph.',
+      'Use to check what is indexed here: the commit the graph was built from, whether the ' +
+      'working tree has moved on, the schema, the embedding and the graph size.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'dai_memory_clusters',
     description:
-      'Groups of related memories, with the summary somebody wrote for each group ' +
-      'if one exists. Use for a broad question about an area rather than one symbol. ' +
-      'Detection only -- nothing here generates a summary.',
+      'Use for a broad question about an area rather than one symbol: groups of related ' +
+      'memories. For the call graph use dai_memory_code_clusters.',
     inputSchema: { type: 'object', properties: { min_size: { type: 'number' } } },
   },
   {
     name: 'dai_memory_summarize',
     description:
-      'Record a summary you wrote for a group from dai_memory_clusters. The body is ' +
-      'yours: this tool stores it and links it to the group members, so it survives ' +
-      'the grouping being recomputed. Read the members before writing one.',
+      'Use to record a summary you wrote for a group from dai_memory_clusters. Read the members ' +
+      'first; nothing here generates text.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -487,9 +444,8 @@ const TOOLS = [
   {
     name: 'dai_memory_changes',
     description:
-      'What memory already records about the files this change touches. Run before ' +
-      'committing: it is the moment a change can contradict a decision someone made ' +
-      'and wrote down. Reports files with nothing recorded too, so silence is visible.',
+      'Use before committing: what memory already records about the files this change touches, ' +
+      'including the files with nothing recorded.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -501,16 +457,91 @@ const TOOLS = [
   {
     name: 'dai_memory_conflicts',
     description:
-      'Contradictions between recorded decisions that a person needs to settle. ' +
-      'Check this before recording a new decision.',
+      'Use before recording a decision: contradictions between recorded decisions that a person ' +
+      'needs to settle.',
     inputSchema: { type: 'object', properties: {} },
+  },
+];
+
+/**
+ * Workflows, for any client rather than one.
+ *
+ * `commands/*.md` is a Claude Code file: another MCP client never sees it, so the
+ * same workflow had to be re-typed by whoever used one. These are the protocol's
+ * own form of the same thing, and they are the only place a multi-step routine is
+ * written down once.
+ *
+ * Each one names the tools to call and what to do with the answer. None of them
+ * calls a tool itself: a prompt is text handed to the model, and the model decides.
+ */
+export const PROMPTS = [
+  {
+    name: 'memory_search',
+    description: 'Use to search project memory and report what is recorded, including what is stale.',
+    arguments: [{ name: 'query', description: 'What you want to know.', required: true }],
+    text: (args: Record<string, string>) => [
+      `Search this project's memory for: ${args.query ?? ''}`,
+      '',
+      'Use the `dai_memory_search` tool. Then report back:',
+      '',
+      '1. The matching memories, each with its `source_ref` and layer.',
+      '2. Any entry marked `stale`, flagged as such.',
+      '3. The `fusion` block if any branch is `degraded` -- the reader should know',
+      '   when a ranking rests on fewer signals than usual.',
+      '',
+      'If nothing matches, say that nothing is recorded, rather than concluding that',
+      'nothing exists.',
+    ].join('\n'),
+  },
+  {
+    name: 'memory_why',
+    description: 'Use to explain why a file or symbol is the way it is, from the recorded decisions.',
+    arguments: [{ name: 'target', description: 'A file path or a symbol name.', required: true }],
+    text: (args: Record<string, string>) => [
+      `Explain the reasoning behind: ${args.target ?? ''}`,
+      '',
+      '1. Call `dai_memory_why` with that file path or symbol.',
+      '2. Lead with the decisions (`semantic`) and the reason each was chosen over its',
+      '   alternative. Follow with the incidents (`episodic`) that prompted them.',
+      '3. Use `dai_memory_neighbors` on any decision worth tracing, to pick up what it',
+      '   `RESOLVES` or what `SUPERSEDES` it.',
+      '4. Cite the `source_ref` for every claim.',
+      '',
+      'If the result carries `index.stale`, or entries are marked stale, say so: the',
+      'store describes what was true when it was recorded, and the working tree is the',
+      'authority on what is true now.',
+    ].join('\n'),
+  },
+  {
+    name: 'memory_before_commit',
+    description: 'Use before committing, to check a change against what memory and the code graph already record.',
+    arguments: [
+      { name: 'scope', description: 'staged (default), working, or compare.', required: false },
+    ],
+    text: (args: Record<string, string>) => {
+      const scope = args.scope ?? 'staged';
+      return [
+        `Check this change before it is committed. Scope: ${scope}.`,
+        '',
+        `1. \`dai_memory_changes\` with scope ${scope}: what memory already records about the`,
+        '   files being changed. Files with nothing recorded are reported too -- say so',
+        '   rather than reading silence as agreement.',
+        `2. \`dai_memory_detect_changes\` with scope ${scope}: what the diff changes in`,
+        '   declarations, what depends on them, and the risk.',
+        '3. `dai_memory_conflicts`: contradictions a person still has to settle.',
+        '',
+        'Report anything the change contradicts, and name the `source_ref` of each',
+        'recorded decision it touches. If the index is stale, say that first: a stale',
+        'graph cannot rule anything out.',
+      ].join('\n');
+    },
   },
 ];
 
 export async function serve(): Promise<void> {
   const server = new Server(
     { name: 'memory-layer', version: '0.1.0' },
-    { capabilities: { tools: {}, resources: {} } },
+    { capabilities: { tools: {}, resources: {}, prompts: {} } },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
@@ -536,6 +567,28 @@ export async function serve(): Promise<void> {
         }],
       };
     }
+  });
+
+  // Prompts carry the multi-step routines. Listing them is cheap; the body is
+  // fetched only when one is asked for, so an unused workflow costs nothing.
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    prompts: PROMPTS.map(({ name, description, arguments: args }) => ({ name, description, arguments: args })),
+  }));
+
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const prompt = PROMPTS.find((entry) => entry.name === request.params.name);
+    if (!prompt) throw new Error(`no such prompt: ${request.params.name}`);
+    const args = (request.params.arguments ?? {}) as Record<string, string>;
+    const missing = (prompt.arguments ?? [])
+      .filter((argument) => argument.required && !args[argument.name])
+      .map((argument) => argument.name);
+    // A prompt rendered with a hole in it reads like a question about nothing, so
+    // the missing argument is named instead.
+    if (missing.length > 0) throw new Error(`${prompt.name} needs: ${missing.join(', ')}`);
+    return {
+      description: prompt.description,
+      messages: [{ role: 'user', content: { type: 'text', text: prompt.text(args) } }],
+    };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
