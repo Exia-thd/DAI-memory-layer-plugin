@@ -307,3 +307,67 @@ test('the graph stops rendering when it is not the tab in front', () => {
     repo.cleanup();
   }
 });
+
+test('the list is budgeted, and says so', async () => {
+  // Measured before this existed: a 462 MB store produced a 40 MB page, 36 MB
+  // of which was 27,529 ingested chunks carried in order to display 23
+  // recorded decisions. Chrome ran out of memory opening it.
+  const repo = seeded();
+  const { html } = built(repo, ['--max-nodes', '50']);
+  const payload = payloadOf(html);
+
+  assert.ok(payload.listing, 'the page must report what the list holds');
+  assert.equal(payload.listing.shown, payload.memories.length);
+  assert.ok(payload.listing.total >= payload.listing.shown);
+  assert.ok(payload.memories.length <= 2000, 'the list has an upper bound');
+});
+
+test('recorded reasoning outranks ingested chunks in the list', async () => {
+  // The budget must never be spent on raw material while a decision falls off
+  // the end: the decisions are the entire point of the store.
+  const repo = seeded();
+  // seeded() only ingests files, which produces artifact chunks and no recorded
+  // reasoning at all - so record one, or the assertion below proves nothing.
+  cli(repo, ['write', '--layer', 'semantic', '--title', 'Cap retries at two',
+    '--body', 'The processor counts attempts, not elapsed time.',
+    '--source-ref', 'docs/adr.md#L3-L5']);
+  const { html } = built(repo);
+  const payload = payloadOf(html);
+
+  const rank = { semantic: 0, episodic: 1, procedural: 2, artifact: 3 };
+  const seen = payload.memories.map((memory) => rank[memory.layer] ?? 2);
+  const sorted = [...seen].sort((a, b) => a - b);
+  assert.deepEqual(seen, sorted, 'layers must come out in order of what they are worth');
+
+  const recorded = payload.memories.filter((memory) => memory.layer !== 'artifact');
+  const omittedRecorded = Object.entries(payload.listing.omittedByLayer)
+    .filter(([layer]) => layer !== 'artifact')
+    .reduce((total, [, count]) => total + count, 0);
+  assert.equal(omittedRecorded, 0, 'no recorded memory may be dropped for a chunk');
+  assert.ok(recorded.length > 0, 'the fixture records at least one decision');
+});
+
+test('a trimmed body says how long it really is and where to read it', async () => {
+  const repo = seeded();
+  const { html } = built(repo);
+  const payload = payloadOf(html);
+
+  for (const memory of payload.memories) {
+    if (!memory.bodyTrimmed) {
+      assert.equal(memory.bodyBytes, undefined, 'an untrimmed body claims no length');
+      continue;
+    }
+    assert.ok(memory.bodyBytes > memory.body.length, 'the full length must be reported');
+    assert.ok(memory.sourceRef, 'a preview is only honest if the source can be reached');
+  }
+});
+
+test('the page no longer claims the Memories tab holds everything', async () => {
+  // It said so while the tab had no budget. Once it got one that sentence was
+  // a lie, and a viewer that lies about what it cut is worse than one that cuts.
+  const repo = seeded();
+  const { html } = built(repo, ['--max-nodes', '50']);
+  assert.ok(!html.includes('Everything is still in the Memories tab'),
+    'the old claim must be gone');
+  assert.ok(html.includes('not listed'), 'the page must be able to report an unlisted remainder');
+});

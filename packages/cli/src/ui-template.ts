@@ -42,13 +42,24 @@ export interface UiPayload {
     id: string;
     layer: string;
     title: string;
+    /** A preview when `bodyTrimmed` is set; the whole body otherwise. */
     body: string;
+    /** Length of the untrimmed body, present only when it was trimmed. */
+    bodyBytes?: number;
+    bodyTrimmed?: boolean;
     sourceRef: string;
     importance: number;
     ageDays: number;
     edges: number;
     contested: boolean;
   }>;
+  /** What the list shows against what the store holds. */
+  listing: {
+    shown: number;
+    total: number;
+    trimmedBodies: number;
+    omittedByLayer: Record<string, number>;
+  };
   /** Set when the graph was cut to its node budget: how many there were, and what was left out. */
   truncated: { nodes: number; omitted?: Record<string, number> } | null;
 }
@@ -706,7 +717,16 @@ export function renderUi(payload: UiPayload): string {
       var dd = document.createElement('dd'); dd.textContent = text(pair[1]);
       kv.appendChild(dt); kv.appendChild(dd);
     });
-    detail.querySelector('pre').textContent = memory.body;
+    var pre = detail.querySelector('pre');
+    pre.textContent = memory.body;
+    if (memory.bodyTrimmed) {
+      // Say so rather than letting a cut body read as a short one.
+      var cut = document.createElement('p');
+      cut.className = 'empty';
+      cut.textContent = 'Preview of ' + memory.bodyBytes + ' characters. ' +
+        'The whole text is at ' + memory.sourceRef + '.';
+      pre.parentNode.insertBefore(cut, pre.nextSibling);
+    }
     render();
   }
 
@@ -791,9 +811,34 @@ export function renderUi(payload: UiPayload): string {
       .map(function (kind) { return data.truncated.omitted[kind] + ' ' + kind; });
     note.textContent = 'Showing ' + data.graph.nodes.length + ' of ' + data.truncated.nodes + ' nodes' +
       (left.length ? '; not drawn: ' + left.join(', ') : '') +
-      '. Everything is still in the Memories tab. Narrow the graph with a path: dai-memory ui src/store';
+      '. Narrow the graph with a path: dai-memory ui src/store';
     warning.appendChild(label); warning.appendChild(state); warning.appendChild(note);
     health.appendChild(warning);
+  }
+
+  // The list is budgeted too now, so it has to say so. The old banner claimed
+  // "everything is still in the Memories tab", which stopped being true the
+  // moment that tab got a budget of its own.
+  var listing = data.listing;
+  if (listing && (listing.shown < listing.total || listing.trimmedBodies > 0)) {
+    var row = document.createElement('div');
+    var who = document.createElement('span'); who.textContent = 'memories';
+    var how = document.createElement('span'); how.className = 'st warn'; how.textContent = 'WARN';
+    var what = document.createElement('span');
+    var parts = [];
+    if (listing.shown < listing.total) {
+      var dropped = Object.keys(listing.omittedByLayer)
+        .filter(function (layer) { return listing.omittedByLayer[layer] > 0; })
+        .map(function (layer) { return listing.omittedByLayer[layer] + ' ' + layer; });
+      parts.push('Listing ' + listing.shown + ' of ' + listing.total +
+        (dropped.length ? '; not listed: ' + dropped.join(', ') : ''));
+    }
+    if (listing.trimmedBodies > 0) {
+      parts.push(listing.trimmedBodies + ' body text(s) shown as a preview');
+    }
+    what.textContent = parts.join('. ') + '. Narrow with a path: dai-memory ui src/store';
+    row.appendChild(who); row.appendChild(how); row.appendChild(what);
+    health.appendChild(row);
   }
 }());
 </script>

@@ -24,6 +24,37 @@ import { renderUi, type UiPayload } from './ui-template.js';
  */
 const MAX_GRAPH_NODES = 3000;
 
+/**
+ * The same idea for the list, which never had one.
+ *
+ * Measured on a 462 MB store: the page embedded 27,552 entries and weighed
+ * 40 MB, and Chrome refused to open it. 27,529 of those were artifact chunks --
+ * the ingested text the memories were derived from -- against 23 recorded
+ * decisions. The viewer was shipping the raw material in order to show the
+ * conclusions.
+ */
+const MAX_LIST_ENTRIES = 2000;
+
+/**
+ * How much of a body travels with the list.
+ *
+ * Bodies here run to about 1.1 KB each, and the detail pane shows one at a
+ * time. Every node carries a `sourceRef` precisely so the full text can be
+ * reached from it, so a preview plus the ref loses nothing a reader cannot get
+ * -- while a page that will not open loses everything.
+ */
+const BODY_PREVIEW = 600;
+
+/**
+ * Recorded reasoning before ingested material, so the budget can never spend
+ * itself on chunks and drop a decision. Within a layer the existing order
+ * stands: importance, then age.
+ */
+const LAYER_RANK: Record<string, number> = {
+  semantic: 0, episodic: 1, procedural: 2, artifact: 3,
+};
+const layerRank = (layer: string): number => LAYER_RANK[layer] ?? 2;
+
 type UiOptions = { from?: string; out?: string; prefix?: string; maxNodes?: number };
 
 export async function runUi(
@@ -103,7 +134,24 @@ export async function buildUi(
         edges: degree.get(node.id) ?? 0,
         contested: contested.has(node.id),
       }))
-      .sort((a, b) => b.importance - a.importance || a.ageDays - b.ageDays);
+      .sort((a, b) =>
+        layerRank(a.layer) - layerRank(b.layer) ||
+        b.importance - a.importance ||
+        a.ageDays - b.ageDays);
+
+    const listTotal = memories.length;
+    const omittedByLayer: Record<string, number> = {};
+    for (const node of memories.slice(MAX_LIST_ENTRIES)) {
+      omittedByLayer[node.layer] = (omittedByLayer[node.layer] ?? 0) + 1;
+    }
+
+    let trimmedBodies = 0;
+    const listed = memories.slice(0, MAX_LIST_ENTRIES).map((node) => {
+      const full = node.body ?? '';
+      if (full.length <= BODY_PREVIEW) return node;
+      trimmedBodies++;
+      return { ...node, body: full.slice(0, BODY_PREVIEW), bodyBytes: full.length, bodyTrimmed: true };
+    });
 
     // The page reports any cut; a silently shortened picture is a lie about the
     // shape of the graph.
@@ -130,7 +178,13 @@ export async function buildUi(
         detail: check.detail,
       })),
       graph,
-      memories,
+      memories: listed,
+      listing: {
+        shown: listed.length,
+        total: listTotal,
+        trimmedBodies,
+        omittedByLayer,
+      },
       truncated: truncated ? { nodes: total, omitted } : null,
     };
 
