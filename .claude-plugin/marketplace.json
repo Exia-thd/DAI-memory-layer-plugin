@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "dai-memory",
-      "description": "Records why decisions were made, what broke, and which constraints apply, then retrieves them when the agent meets unfamiliar code. Builds a call/inherit/import graph across 29 languages so a memory can be reached from the code it is about.",
+      "description": "Records why decisions were made, what broke, and which constraints apply, then retrieves them when the agent meets unfamiliar code. Builds a call/inherit/import graph across 29 languages, so it can also answer what breaks if this changes, how A reaches B, and where untrusted input ends up.",
       "category": "productivity",
       "source": "./"
     }

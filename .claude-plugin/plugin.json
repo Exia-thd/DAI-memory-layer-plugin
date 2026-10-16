@@ -1,8 +1,21 @@
 {
   "name": "dai-memory",
   "version": "0.1.0",
-  "description": "Project memory: records why decisions were made, what broke, and which constraints apply, then retrieves them when the agent needs the reasoning behind unfamiliar code.",
-  "author": { "name": "Dat Tran Huu" },
+  "description": "Project memory and code intelligence: records why decisions were made, what broke, and which constraints apply, and builds a call graph so an agent can ask what breaks before it edits, follow untrusted input to where it lands, trace one declaration to another, and rename through the graph rather than by text.",
+  "author": {
+    "name": "Dat Tran Huu"
+  },
   "license": "MIT",
-  "keywords": ["memory", "context", "decisions", "adr", "retrieval", "graph"]
+  "keywords": [
+    "memory",
+    "context",
+    "decisions",
+    "adr",
+    "retrieval",
+    "code-graph",
+    "impact-analysis",
+    "refactoring",
+    "taint",
+    "debugging"
+  ]
 }
