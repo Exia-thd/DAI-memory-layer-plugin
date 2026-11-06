@@ -1,11 +1,12 @@
 # Code-intelligence roadmap
 
-The DAI harness uses this layer as its memory and code-graph engine. It
-currently also runs GitNexus for code intelligence, which is PolyForm
-Noncommercial and cannot stay in a product meant to be sold. The decision
-(2026-09-17) is to **build every capability GitNexus provides into this layer
-first, and remove GitNexus only after that** — nothing the harness relies on is
-dropped along the way.
+The DAI harness uses this layer as its memory and code-graph engine. It used to
+run GitNexus for code intelligence as well, which is PolyForm Noncommercial and
+could not stay in a product meant to be sold. The decision (2026-09-17) was to
+**build every capability GitNexus provides into this layer first, and remove
+GitNexus only after that** — nothing the harness relies on was dropped along
+the way. As of 2026-11-06 that is finished: GitNexus is gone from the harness
+and this layer answers in its place.
 
 Every capability is built from GitNexus's published tool interfaces — names,
 arguments, what an answer means — and never from its source.
@@ -31,7 +32,7 @@ change-impact on every commit, and seven of its skills call `impact` and
 | M7 | Program dependence and taint | per-function control flow, control dependence and reaching definitions; taint sources, sinks and sanitizers with function-level cross-function paths; `explain`, `pdg_query` | **done** -- CLI `taint`, `explain`, `pdg`; MCP tools and a taint resource. Taint is pattern matching joined by the call graph, not value tracking, and every answer says so |
 | M8 | Multi-repository groups | group configuration, a registry of HTTP contracts between repositories, `group_list`, `group_sync`, `trace` across a group | **done** -- CLI `group` and `contracts`, MCP `dai_memory_groups` and `dai_memory_contracts`. Contracts are matched on method and path; bodies are not checked, and the answer says so |
 | M9 | Wiki | documentation generated from the graph and the memory, through an explicitly configured model provider — never one chosen by default | **done** -- CLI `wiki` (`--check` reports drift and writes nothing), MCP `dai_memory_wiki`. Derived text only: no provider is configured by this build, so no model is called and every page says so |
-| M10 | Harness switch-over | the gate, MCP configuration, skills, installers and docs move to this layer; GitNexus is removed; the harness's older memory stores are retired | next |
+| M10 | Harness switch-over | the gate, MCP configuration, skills, installers and docs move to this layer; GitNexus is removed; the harness's older memory stores are retired | **done** -- verified in the harness on 2026-11-06: the commit gate's `change-impact` step runs `detect-changes`, 23 `dai_memory_*` tools are wired in `.daiharness/mcp-server/mcp-config.json`, seven `dai-memory-*` skills replace the GitNexus set, `daiharness-mcp-setup.sh` manages the `dai-memory` entry and removes the legacy `gitnexus` one it had written, `.gitnexus/` is gone and `CLAUDE.md` names GitNexus nowhere. The retired stores (`scripts/lite/memory.py`, `antigravity/src/memory/graph*.py`) are deleted; `scripts/lite/migrate-memory.py` is kept as the one-time migration tool |
 
 ## Rules every milestone keeps
 
